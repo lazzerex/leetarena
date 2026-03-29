@@ -12,7 +12,7 @@ import { TAG_TO_ELEMENT } from '@leetarena/types';
 
 export const syncRoutes = new Hono<{ Bindings: Env }>();
 
-/** Manual sync trigger (rate-limited via Upstash Redis) */
+/** Manual sync trigger */
 syncRoutes.post('/trigger/:userId', async (c) => {
   const userId = c.req.param('userId');
 
@@ -28,20 +28,6 @@ syncRoutes.post('/trigger/:userId', async (c) => {
 
   if (!user || !user.leetcode_username) {
     return c.json({ error: 'No LeetCode username set' }, 400);
-  }
-
-  // Rate limit: once per hour (simplified — in prod use Upstash Redis)
-  const syncStates = await (await db.from('leetcode_sync')).select('*', {
-    user_id: `eq.${userId}`,
-  });
-  const syncState = Array.isArray(syncStates) ? syncStates[0] : null;
-
-  if (syncState) {
-    const lastSync = new Date(syncState.last_synced_at).getTime();
-    const oneHour = 60 * 60 * 1000;
-    if (Date.now() - lastSync < oneHour) {
-      return c.json({ error: 'Rate limited. Try again in an hour.' }, 429);
-    }
   }
 
   const result = await performSync(userId, user.leetcode_username, db);
@@ -81,9 +67,20 @@ export async function performSync(
     (s) => parseInt(s.id) > parseInt(lastSubmissionId)
   );
 
-  let synced = 0;
+  // Keep only the latest submission per problem slug to avoid duplicate work.
+  const uniqueNewSubsMap = new Map<string, (typeof newSubs)[number]>();
+  for (const sub of [...newSubs].sort((a, b) => parseInt(b.id) - parseInt(a.id))) {
+    if (!uniqueNewSubsMap.has(sub.titleSlug)) {
+      uniqueNewSubsMap.set(sub.titleSlug, sub);
+    }
+  }
+  const uniqueNewSubs = Array.from(uniqueNewSubsMap.values());
 
-  for (const sub of newSubs) {
+  let synced = 0;
+  let unlocked = 0;
+  let upgraded = 0;
+
+  for (const sub of uniqueNewSubs) {
     const questionData = await getQuestionData(sub.titleSlug);
     if (!questionData) continue;
 
@@ -96,7 +93,7 @@ export async function performSync(
     });
 
     // Upsert the card into the global cards table
-    await (await db.from('cards')).upsert({
+    const upsertedCards = await (await db.from('cards')).upsert<Array<{ id: string }>>({
       title_slug: sub.titleSlug,
       title: questionData.title,
       difficulty: questionData.difficulty,
@@ -110,30 +107,79 @@ export async function performSync(
       tags,
     });
 
-    // Update user_cards tier if they own this card
-    // Proven = any solve, Mastered = runtime top 20%
+    // Unlock card into collection on first solve; otherwise promote base/locked to proven.
     const newTier = 'proven'; // runtime percentile not available in basic sync
-    const userCards = await (await db.from('user_cards')).select('*', {
+    let cardId = upsertedCards[0]?.id;
+
+    if (!cardId) {
+      const cards = await (await db.from('cards')).select<Array<{ id: string }>>('id', {
+        title_slug: `eq.${sub.titleSlug}`,
+      });
+      cardId = cards[0]?.id;
+    }
+
+    if (cardId) {
+      const userCards = await (await db.from('user_cards')).select<Array<{ id: string; tier: string }>>(
+        'id,tier',
+        {
       user_id: `eq.${userId}`,
-      'card_id->>title_slug': `eq.${sub.titleSlug}`,
-    });
+          card_id: `eq.${cardId}`,
+        }
+      );
+
+      const existingUserCard = userCards[0];
+      if (!existingUserCard) {
+        await (await db.from('user_cards')).insert({
+          user_id: userId,
+          card_id: cardId,
+          tier: newTier,
+          obtained_at: new Date().toISOString(),
+        });
+        unlocked++;
+      } else if (existingUserCard.tier === 'locked' || existingUserCard.tier === 'base') {
+        await (await db.from('user_cards')).update(
+          { tier: newTier },
+          { id: `eq.${existingUserCard.id}` }
+        );
+        upgraded++;
+      }
+    }
 
     // Update algorithm card XP
-    for (const tag of tags) {
+    for (const tag of new Set(tags)) {
       const element = TAG_TO_ELEMENT[tag];
       if (!element) continue;
 
       const xpGain = questionData.difficulty === 'Easy' ? 1
         : questionData.difficulty === 'Medium' ? 2 : 4;
 
-      // Upsert algo card solve count
-      await (await db.from('algorithm_cards')).upsert({
-        slug: tag,
-        name: tag.replace(/-/g, ' '),
-        user_id: userId,
-        solve_count: xpGain, // Will be summed server-side in prod via RPC
-        tier: 'learned',
+      const existingAlgoCards = await (await db.from('algorithm_cards')).select<Array<{
+        id: string;
+        solve_count: number;
+      }>>('id,solve_count', {
+        user_id: `eq.${userId}`,
+        slug: `eq.${tag}`,
       });
+
+      const existingAlgo = existingAlgoCards[0];
+      if (existingAlgo) {
+        const nextSolveCount = Number(existingAlgo.solve_count ?? 0) + xpGain;
+        await (await db.from('algorithm_cards')).update(
+          {
+            solve_count: nextSolveCount,
+            tier: getAlgoTier(nextSolveCount),
+          },
+          { id: `eq.${existingAlgo.id}` }
+        );
+      } else {
+        await (await db.from('algorithm_cards')).insert({
+          slug: tag,
+          name: tag.replace(/-/g, ' '),
+          user_id: userId,
+          solve_count: xpGain,
+          tier: getAlgoTier(xpGain),
+        });
+      }
     }
 
     synced++;
@@ -147,5 +193,11 @@ export async function performSync(
     last_submission_id: latestId,
   });
 
-  return { synced, newSubmissions: newSubs.length };
+  return {
+    synced,
+    newSubmissions: newSubs.length,
+    uniqueProblems: uniqueNewSubs.length,
+    unlocked,
+    upgraded,
+  };
 }
