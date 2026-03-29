@@ -6,6 +6,7 @@ import type { Rarity, Element } from '@leetarena/types';
 
 export const currentUser = writable<User | null>(null);
 export const isAuthenticated = derived(currentUser, ($u) => $u !== null);
+export const authHydrated = writable(false);
 
 // ─── Collection Store ─────────────────────────────────────────────────────────
 
@@ -111,6 +112,7 @@ export function resetBattle() {
 
 export interface PackRevealCard {
   id: string;
+  titleSlug: string;
   title: string;
   rarity: Rarity;
   elementType: Element;
