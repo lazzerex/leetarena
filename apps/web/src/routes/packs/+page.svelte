@@ -93,6 +93,7 @@
       packRevealCards.set(
         (result.cards as any[]).map((c: any) => ({
           id: c.id,
+          titleSlug: c.title_slug ?? c.titleSlug ?? '',
           title: c.title,
           rarity: c.rarity,
           elementType: c.element_type,
@@ -163,8 +164,9 @@
         <!-- Topic pack element selector -->
         {#if pack.id === 'topic'}
           <div class="mb-4">
-            <label class="text-xs text-gray-400 block mb-1.5">Element Filter</label>
+            <label for="topic-element-filter" class="text-xs text-gray-400 block mb-1.5">Element Filter</label>
             <select
+              id="topic-element-filter"
               bind:value={selectedElement}
               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
             >
