@@ -17,6 +17,11 @@
   const elements = ['all', 'Array', 'Graph', 'Tree', 'Math', 'DynamicProgramming', 'String'];
   const tiers = ['all', 'locked', 'base', 'proven', 'mastered'];
 
+  function pickCard(uc: any) {
+    const raw = uc?.card ?? uc?.cards ?? uc;
+    return Array.isArray(raw) ? (raw[0] ?? {}) : raw;
+  }
+
   onMount(async () => {
     if ($currentUser) {
       try {
@@ -30,7 +35,7 @@
   });
 
   $: filtered = $userCollection.filter((uc: any) => {
-    const card = uc.card ?? uc;
+    const card = pickCard(uc);
     if (search && !card.title?.toLowerCase().includes(search.toLowerCase())) return false;
     if (filterRarity !== 'all' && card.rarity !== filterRarity) return false;
     if (filterElement !== 'all' && card.element_type !== filterElement) return false;
@@ -42,7 +47,7 @@
     total: $userCollection.length,
     mastered: $userCollection.filter((c: any) => c.tier === 'mastered').length,
     proven: $userCollection.filter((c: any) => c.tier === 'proven').length,
-    legendary: $userCollection.filter((c: any) => (c.card ?? c).rarity === 'legendary').length,
+    legendary: $userCollection.filter((c: any) => pickCard(c).rarity === 'legendary').length,
   };
 </script>
 
@@ -125,7 +130,7 @@
   {:else}
     <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
       {#each filtered as uc (uc.id)}
-        {@const card = uc.card ?? uc}
+        {@const card = pickCard(uc)}
         <div>
           <Card
             title={card.title ?? ''}
@@ -148,7 +153,7 @@
 
 <!-- Card detail modal -->
 {#if selectedCard}
-  {@const card = selectedCard.card ?? selectedCard}
+  {@const card = pickCard(selectedCard)}
   <div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
        on:click={() => selectedCard = null}
        on:keypress={(e) => e.key === 'Escape' && (selectedCard = null)}
