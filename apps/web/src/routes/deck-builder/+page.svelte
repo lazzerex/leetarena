@@ -14,6 +14,11 @@
 
   const elements = ['all', 'Array', 'Graph', 'Tree', 'Math', 'DynamicProgramming', 'String'];
 
+  function pickCard(uc: any) {
+    const raw = uc?.card ?? uc?.cards ?? uc;
+    return Array.isArray(raw) ? (raw[0] ?? {}) : raw;
+  }
+
   onMount(async () => {
     if ($currentUser) {
       try {
@@ -25,7 +30,7 @@
   });
 
   $: available = $userCollection.filter((uc: any) => {
-    const card = uc.card ?? uc;
+    const card = pickCard(uc);
     const inDeck = $deckBuilderCards.find((d) => d.id === uc.id);
     if (inDeck) return false;
     if (search && !card.title?.toLowerCase().includes(search.toLowerCase())) return false;
@@ -100,7 +105,7 @@
         {:else}
           <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 max-h-[600px] overflow-y-auto pr-1">
             {#each available as uc (uc.id)}
-              {@const card = uc.card ?? uc}
+              {@const card = pickCard(uc)}
               <div class="cursor-pointer hover:scale-105 transition-transform"
                    on:click={() => addCardToDeck(uc)}
                    on:keypress={(e) => e.key === 'Enter' && addCardToDeck(uc)}
@@ -158,7 +163,7 @@
         <!-- Cards in deck -->
         <div class="space-y-1.5 mb-4 max-h-72 overflow-y-auto">
           {#each $deckBuilderCards as uc, i (uc.id)}
-            {@const card = uc.card ?? uc}
+            {@const card = pickCard(uc)}
             <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2">
               <span class="text-gray-500 text-xs w-4">{i + 1}</span>
               <div class="flex-1 min-w-0">
