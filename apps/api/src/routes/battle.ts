@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Env } from '../index';
 import { createSupabase } from '../lib/supabase';
+import { getAuthenticatedUser, isOwner } from '../lib/auth';
 import { getTypeMultiplier } from '@leetarena/types';
 import type { BattleRound, BattleRewards } from '@leetarena/types';
 
@@ -14,10 +15,16 @@ const CreateBattleSchema = z.object({
   deck2Id: z.string().uuid(),
 });
 
-const PlayCardSchema = z.object({
+const ResolveRoundSchema = z.object({
   battleId: z.string().uuid(),
-  playerId: z.string().uuid(),
-  cardId: z.string().uuid(),
+  player1CardId: z.string().uuid(),
+  player2CardId: z.string().uuid(),
+});
+
+const FinishBattleSchema = z.object({
+  battleId: z.string().uuid(),
+  winnerId: z.string().uuid(),
+  loserId: z.string().uuid(),
 });
 
 /** Create a new battle */
@@ -26,15 +33,36 @@ battleRoutes.post('/create', async (c) => {
   const parsed = CreateBattleSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
   const { player1Id, player2Id, deck1Id, deck2Id } = parsed.data;
 
-  // Validate decks
-  const deck1Cards = await getDeckCards(deck1Id, db);
-  const deck2Cards = await getDeckCards(deck2Id, db);
+  if (!isOwner(authUser, player1Id)) {
+    return c.json({ error: 'Forbidden: player1Id must match authenticated user' }, 403);
+  }
 
-  const validationError1 = validateDeck(deck1Cards);
-  const validationError2 = validateDeck(deck2Cards);
+  // Validate decks
+  const [deck1, deck2] = await Promise.all([
+    getDeckById(deck1Id, db),
+    getDeckById(deck2Id, db),
+  ]);
+
+  if (!deck1 || !deck2) {
+    return c.json({ error: 'Deck not found' }, 404);
+  }
+
+  if (deck1.user_id !== player1Id) {
+    return c.json({ error: 'Deck 1 does not belong to player 1' }, 403);
+  }
+
+  if (deck2.user_id !== player2Id) {
+    return c.json({ error: 'Deck 2 does not belong to player 2' }, 400);
+  }
+
+  const validationError1 = await validateDeck(deck1.card_ids ?? [], player1Id, db);
+  const validationError2 = await validateDeck(deck2.card_ids ?? [], player2Id, db);
   if (validationError1) return c.json({ error: `Deck 1: ${validationError1}` }, 400);
   if (validationError2) return c.json({ error: `Deck 2: ${validationError2}` }, 400);
 
@@ -58,22 +86,35 @@ battleRoutes.post('/create', async (c) => {
 /** Resolve a round when both players have played a card */
 battleRoutes.post('/resolve-round', async (c) => {
   const body = await c.req.json();
-  const { battleId, player1CardId, player2CardId } = body as {
-    battleId: string;
-    player1CardId: string;
-    player2CardId: string;
-  };
+  const parsed = ResolveRoundSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+
+  const { battleId, player1CardId, player2CardId } = parsed.data;
 
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+  const battle = await getBattleById(battleId, db);
+
+  if (!battle) return c.json({ error: 'Battle not found' }, 404);
+  if (authUser.id !== battle.player1_id && authUser.id !== battle.player2_id) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
 
   // Fetch both cards
   const [card1, card2] = await Promise.all([
-    getCardStats(player1CardId, db),
-    getCardStats(player2CardId, db),
+    getUserCardStats(player1CardId, db),
+    getUserCardStats(player2CardId, db),
   ]);
 
   if (!card1 || !card2) {
     return c.json({ error: 'Card not found' }, 404);
+  }
+
+  const allowedOwners = new Set([battle.player1_id, battle.player2_id]);
+  if (!allowedOwners.has(card1.ownerId) || !allowedOwners.has(card2.ownerId)) {
+    return c.json({ error: 'Card does not belong to battle participants' }, 400);
   }
 
   // Type advantage
@@ -108,13 +149,28 @@ battleRoutes.post('/resolve-round', async (c) => {
 
 /** Finish a battle and issue rewards */
 battleRoutes.post('/finish', async (c) => {
-  const { battleId, winnerId, loserId } = await c.req.json() as {
-    battleId: string;
-    winnerId: string;
-    loserId: string;
-  };
+  const body = await c.req.json();
+  const parsed = FinishBattleSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+
+  const { battleId, winnerId, loserId } = parsed.data;
 
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+  const battle = await getBattleById(battleId, db);
+
+  if (!battle) return c.json({ error: 'Battle not found' }, 404);
+
+  const participants = new Set([battle.player1_id, battle.player2_id]);
+  if (!participants.has(authUser.id)) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  if (!participants.has(winnerId) || !participants.has(loserId) || winnerId === loserId) {
+    return c.json({ error: 'Invalid winner/loser payload' }, 400);
+  }
 
   const rewards: BattleRewards = {
     winnerId,
@@ -134,14 +190,37 @@ battleRoutes.post('/finish', async (c) => {
     { id: `eq.${battleId}` }
   );
 
-  // Update ratings & coins
+  const [winnerRows, loserRows] = await Promise.all([
+    (await db.from('users')).select<{ id: string; coins: number; rating: number }[]>(
+      'id,coins,rating',
+      { id: `eq.${winnerId}` }
+    ),
+    (await db.from('users')).select<{ id: string; coins: number; rating: number }[]>(
+      'id,coins,rating',
+      { id: `eq.${loserId}` }
+    ),
+  ]);
+
+  const winner = winnerRows[0];
+  const loser = loserRows[0];
+
+  if (!winner || !loser) {
+    return c.json({ error: 'Player not found' }, 404);
+  }
+
+  const nextWinnerCoins = Number(winner.coins) + rewards.winnerCoins;
+  const nextWinnerRating = Number(winner.rating) + rewards.winnerRatingDelta;
+  const nextLoserCoins = Number(loser.coins) + rewards.loserCoins;
+  const nextLoserRating = Number(loser.rating) + rewards.loserRatingDelta;
+
+  // Persist numeric values explicitly to avoid unsafe string arithmetic updates.
   await Promise.all([
     (await db.from('users')).update(
-      { coins: `coins + ${rewards.winnerCoins}`, rating: `rating + ${rewards.winnerRatingDelta}` },
+      { coins: nextWinnerCoins, rating: nextWinnerRating },
       { id: `eq.${winnerId}` }
     ),
     (await db.from('users')).update(
-      { coins: `coins + ${rewards.loserCoins}`, rating: `rating + ${rewards.loserRatingDelta}` },
+      { coins: nextLoserCoins, rating: nextLoserRating },
       { id: `eq.${loserId}` }
     ),
   ]);
@@ -151,28 +230,75 @@ battleRoutes.post('/finish', async (c) => {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async function getDeckCards(deckId: string, db: any): Promise<any[]> {
-  const decks = (await (await db.from('decks')).select('*', { id: `eq.${deckId}` })) as any[];
-  const deck = decks[0];
-  if (!deck) return [];
-  return deck.card_ids ?? [];
+async function getDeckById(deckId: string, db: any) {
+  const decks = await (await db.from('decks')).select<any[]>('*', { id: `eq.${deckId}` });
+  return decks[0] ?? null;
 }
 
-function validateDeck(cardIds: string[]): string | null {
+async function validateDeck(cardIds: string[], ownerId: string, db: any): Promise<string | null> {
   if (cardIds.length !== 10) return 'Deck must have exactly 10 cards';
+
+  const uniqueCardIds = new Set(cardIds);
+  if (uniqueCardIds.size !== 10) return 'Deck cannot contain duplicate cards';
+
+  const userCards = await (await db.from('user_cards')).select<any[]>(
+    'id,cards(element_type)',
+    {
+      user_id: `eq.${ownerId}`,
+      id: `in.(${cardIds.join(',')})`,
+    }
+  );
+
+  if (userCards.length !== 10) {
+    return 'Deck contains invalid or unowned cards';
+  }
+
+  const elementTypes = new Set(
+    userCards
+      .map((card) => readElementType(card.cards))
+      .filter((element): element is string => Boolean(element))
+  );
+
+  if (elementTypes.size < 2) {
+    return 'Deck must include at least 2 different element types';
+  }
+
   return null;
 }
 
-async function getCardStats(cardId: string, db: any) {
-  const cards = (await (await db.from('cards')).select('*', { id: `eq.${cardId}` })) as any[];
-  const card = cards[0];
-  if (!card) return null;
+function readElementType(cardsField: unknown): string | null {
+  if (Array.isArray(cardsField)) return cardsField[0]?.element_type ?? null;
+  if (cardsField && typeof cardsField === 'object') {
+    return (cardsField as { element_type?: string }).element_type ?? null;
+  }
+  return null;
+}
+
+async function getUserCardStats(userCardId: string, db: any) {
+  const userCards = await (await db.from('user_cards')).select<any[]>(
+    'id,user_id,cards(base_atk,base_def,base_hp,element_type)',
+    { id: `eq.${userCardId}` }
+  );
+  const userCard = userCards[0];
+  if (!userCard) return null;
+
+  const cardData = Array.isArray(userCard.cards) ? userCard.cards[0] : userCard.cards;
+  if (!cardData) return null;
+
   return {
-    id: card.id,
-    ownerId: card.user_id,
-    elementType: card.element_type,
-    baseAtk: card.base_atk,
-    baseDef: card.base_def,
-    baseHp: card.base_hp,
+    id: userCard.id,
+    ownerId: userCard.user_id,
+    elementType: cardData.element_type,
+    baseAtk: cardData.base_atk,
+    baseDef: cardData.base_def,
+    baseHp: cardData.base_hp,
   };
+}
+
+async function getBattleById(battleId: string, db: any) {
+  const battles = await (await db.from('battles')).select<any[]>(
+    'id,player1_id,player2_id,status',
+    { id: `eq.${battleId}` }
+  );
+  return battles[0] ?? null;
 }

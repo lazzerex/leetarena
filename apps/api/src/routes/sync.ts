@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../index';
 import { createSupabase } from '../lib/supabase';
+import { getAuthenticatedUser, isOwner } from '../lib/auth';
 import {
   getUserProfile,
   getRecentAcceptedSubmissions,
@@ -14,6 +15,11 @@ export const syncRoutes = new Hono<{ Bindings: Env }>();
 /** Manual sync trigger (rate-limited via Upstash Redis) */
 syncRoutes.post('/trigger/:userId', async (c) => {
   const userId = c.req.param('userId');
+
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+  if (!isOwner(authUser, userId)) return c.json({ error: 'Forbidden' }, 403);
+
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
 
   // Fetch user

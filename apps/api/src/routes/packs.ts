@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Env } from '../index';
 import { createSupabase } from '../lib/supabase';
+import { getAuthenticatedUser, isOwner } from '../lib/auth';
 import { rollPackRarities } from '../lib/rng';
 import type { PackType, Rarity } from '@leetarena/types';
 import { PACK_COSTS } from '@leetarena/types';
@@ -20,6 +21,11 @@ packRoutes.post('/open', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
   const { userId, packType, elementFilter } = parsed.data;
+
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+  if (!isOwner(authUser, userId)) return c.json({ error: 'Forbidden' }, 403);
+
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
 
   // Fetch user
@@ -63,9 +69,24 @@ packRoutes.post('/open', async (c) => {
 
   // Pick cards for each rarity slot
   const cardIds: string[] = [];
+  const missingRarities: Rarity[] = [];
   for (const rarity of rarities) {
     const card = await pickCardForRarity(rarity, userId, packType as PackType, elementFilter, db);
-    if (card) cardIds.push(card.id);
+    if (!card) {
+      missingRarities.push(rarity);
+      continue;
+    }
+    cardIds.push(card.id);
+  }
+
+  if (missingRarities.length > 0) {
+    return c.json(
+      {
+        error: 'No valid card pool available for this pack configuration',
+        missingRarities,
+      },
+      409
+    );
   }
 
   // Deduct coins

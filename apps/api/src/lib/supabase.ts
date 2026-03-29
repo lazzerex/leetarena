@@ -2,6 +2,18 @@
  * Minimal Supabase REST helper for Cloudflare Workers.
  * (No npm client — uses raw fetch to stay edge-compatible.)
  */
+export class SupabaseRequestError extends Error {
+  status: number;
+  details: unknown;
+
+  constructor(message: string, status: number, details: unknown) {
+    super(message);
+    this.name = 'SupabaseRequestError';
+    this.status = status;
+    this.details = details;
+  }
+}
+
 export class SupabaseClient {
   private url: string;
   private key: string;
@@ -20,57 +32,92 @@ export class SupabaseClient {
     };
   }
 
+  private parseBody(raw: string): unknown {
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return raw;
+    }
+  }
+
+  private errorMessage(details: unknown, fallback: string): string {
+    if (details && typeof details === 'object' && !Array.isArray(details)) {
+      const detailObj = details as Record<string, unknown>;
+      const maybeMessage = detailObj.message ?? detailObj.error ?? detailObj.hint;
+      if (typeof maybeMessage === 'string' && maybeMessage.length > 0) {
+        return maybeMessage;
+      }
+    }
+    return fallback;
+  }
+
+  private async request<T>(url: string, init: RequestInit, fallbackError: string): Promise<T> {
+    const res = await fetch(url, init);
+    const raw = await res.text();
+    const body = this.parseBody(raw);
+
+    if (!res.ok) {
+      const message = this.errorMessage(body, `${fallbackError} (${res.status})`);
+      throw new SupabaseRequestError(message, res.status, body);
+    }
+
+    return body as T;
+  }
+
   async from(table: string) {
     const base = `${this.url}/rest/v1/${table}`;
     const headers = this.headers();
 
     return {
-      select: async (query = '*', filters: Record<string, string> = {}) => {
+      select: async <T = unknown>(query = '*', filters: Record<string, string> = {}) => {
         const params = new URLSearchParams({ select: query, ...filters });
-        const res = await fetch(`${base}?${params}`, { headers });
-        return res.json();
+        return this.request<T>(
+          `${base}?${params}`,
+          { headers },
+          `Supabase select failed for ${table}`
+        );
       },
-      insert: async (data: unknown) => {
-        const res = await fetch(base, {
+      insert: async <T = unknown>(data: unknown) => {
+        return this.request<T>(base, {
           method: 'POST',
           headers,
           body: JSON.stringify(data),
-        });
-        return res.json();
+        }, `Supabase insert failed for ${table}`);
       },
-      update: async (data: unknown, filters: Record<string, string>) => {
+      update: async <T = unknown>(data: unknown, filters: Record<string, string>) => {
         const params = new URLSearchParams(filters);
-        const res = await fetch(`${base}?${params}`, {
+        return this.request<T>(`${base}?${params}`, {
           method: 'PATCH',
           headers,
           body: JSON.stringify(data),
-        });
-        return res.json();
+        }, `Supabase update failed for ${table}`);
       },
-      upsert: async (data: unknown) => {
-        const res = await fetch(base, {
+      upsert: async <T = unknown>(data: unknown) => {
+        return this.request<T>(base, {
           method: 'POST',
           headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=representation' },
           body: JSON.stringify(data),
-        });
-        return res.json();
+        }, `Supabase upsert failed for ${table}`);
       },
-      delete: async (filters: Record<string, string>) => {
+      delete: async <T = unknown>(filters: Record<string, string>) => {
         const params = new URLSearchParams(filters);
-        const res = await fetch(`${base}?${params}`, { method: 'DELETE', headers });
-        return res.json();
+        return this.request<T>(
+          `${base}?${params}`,
+          { method: 'DELETE', headers },
+          `Supabase delete failed for ${table}`
+        );
       },
     };
   }
 
   /** Execute raw SQL via the rpc endpoint */
-  async rpc(fn: string, params: Record<string, unknown> = {}) {
-    const res = await fetch(`${this.url}/rest/v1/rpc/${fn}`, {
+  async rpc<T = unknown>(fn: string, params: Record<string, unknown> = {}) {
+    return this.request<T>(`${this.url}/rest/v1/rpc/${fn}`, {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify(params),
-    });
-    return res.json();
+    }, `Supabase rpc failed for ${fn}`);
   }
 }
 

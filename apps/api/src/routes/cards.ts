@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../index';
 import { createSupabase } from '../lib/supabase';
+import { getAuthenticatedUser, isOwner } from '../lib/auth';
 
 export const cardRoutes = new Hono<{ Bindings: Env }>();
 
@@ -21,6 +22,11 @@ cardRoutes.get('/', async (c) => {
 /** Get a user's card collection */
 cardRoutes.get('/collection/:userId', async (c) => {
   const userId = c.req.param('userId');
+
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+  if (!isOwner(authUser, userId)) return c.json({ error: 'Forbidden' }, 403);
+
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
 
   const userCards = await (await db.from('user_cards')).select(
@@ -38,6 +44,10 @@ cardRoutes.post('/upgrade', async (c) => {
     cardId: string;
     newTier: 'proven' | 'mastered';
   };
+
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+  if (!isOwner(authUser, userId)) return c.json({ error: 'Forbidden' }, 403);
 
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -57,6 +67,10 @@ cardRoutes.post('/equip', async (c) => {
     algoCardId: string;
     slot: 1 | 2;
   };
+
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+  if (!isOwner(authUser, userId)) return c.json({ error: 'Forbidden' }, 403);
 
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
   const field = slot === 1 ? 'equipped_algo_1' : 'equipped_algo_2';
