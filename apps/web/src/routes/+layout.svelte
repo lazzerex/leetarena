@@ -4,19 +4,23 @@
   import Notifications from '$lib/components/Notifications.svelte';
   import PackOpening from '$lib/components/PackOpening.svelte';
   import { supabase } from '$lib/supabase';
-  import { currentUser } from '$lib/stores';
+  import { authHydrated, currentUser } from '$lib/stores';
   import { onMount } from 'svelte';
 
   onMount(async () => {
-    const { data } = await supabase.auth.getSession();
-    if (data.session?.user) {
-      // Fetch user profile from our users table
-      const { data: profile } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', data.session.user.id)
-        .single();
-      if (profile) currentUser.set(profile);
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user) {
+        // Fetch user profile from our users table
+        const { data: profile } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', data.session.user.id)
+          .single();
+        if (profile) currentUser.set(profile);
+      }
+    } finally {
+      authHydrated.set(true);
     }
 
     supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -30,6 +34,7 @@
       } else {
         currentUser.set(null);
       }
+      authHydrated.set(true);
     });
   });
 </script>
