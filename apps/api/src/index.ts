@@ -50,7 +50,18 @@ app.route('/cards', cardRoutes);
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 app.onError((err, c) => {
   console.error(err);
-  return c.json({ error: 'Internal server error' }, 500);
+  const status =
+    typeof err === 'object' && err !== null && 'status' in err &&
+      typeof (err as { status?: unknown }).status === 'number'
+      ? (err as { status: number }).status
+      : 500;
+
+  if (status >= 500) {
+    return c.json({ error: 'Internal server error' }, status);
+  }
+
+  const message = err instanceof Error ? err.message : 'Request failed';
+  return c.json({ error: message }, status);
 });
 
 export default app;
