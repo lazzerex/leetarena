@@ -1,7 +1,9 @@
 # LeetArena
  
 <p align="center">
-  <img width="255" height="255" alt="leetarena" src="https://github.com/user-attachments/assets/placeholder" />
+  
+ <img width="328" height="335" alt="image-removebg-preview (2)" src="https://github.com/user-attachments/assets/f02ebcb5-a79c-41d7-b53e-0e8675cd6b6e" />
+
 </p>
  
 <p align="center">
