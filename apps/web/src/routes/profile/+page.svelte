@@ -20,16 +20,48 @@
   let syncResult: { synced: number } | null = null;
   let stats = { wins: 0, battles: 0, collection: 0, mastered: 0 };
 
-  onMount(async () => {
-    if (!$currentUser) { goto('/login'); return; }
+  function getLeetCodeUsername(user: any): string {
+    return user?.leetcodeUsername ?? user?.leetcode_username ?? '';
+  }
 
-    leetcodeUsername = $currentUser.leetcodeUsername ?? '';
+  $: connectedLeetCodeUsername = getLeetCodeUsername($currentUser);
+
+  onMount(async () => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const sessionUserId = sessionData.session?.user?.id;
+
+    if (sessionError || !sessionUserId) {
+      goto('/login');
+      return;
+    }
+
+    let activeProfile: any = $currentUser && $currentUser.id === sessionUserId
+      ? $currentUser
+      : null;
+
+    if (!activeProfile) {
+      const { data: profile } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', sessionUserId)
+        .single();
+
+      if (!profile) {
+        goto('/login');
+        return;
+      }
+
+      activeProfile = profile;
+      currentUser.set(profile as any);
+    }
+
+    leetcodeUsername = getLeetCodeUsername(activeProfile);
 
     // Load last sync info
     const { data: syncState } = await supabase
       .from('leetcode_sync')
       .select('last_synced_at')
-      .eq('user_id', $currentUser.id)
+      .eq('user_id', sessionUserId)
       .single();
     lastSynced = syncState?.last_synced_at ?? null;
 
@@ -37,13 +69,13 @@
     const [{ count: battles }, { count: wins }, { count: collection }, { count: mastered }] =
       await Promise.all([
         supabase.from('battles').select('*', { count: 'exact', head: true })
-          .or(`player1_id.eq.${$currentUser.id},player2_id.eq.${$currentUser.id}`),
+          .or(`player1_id.eq.${sessionUserId},player2_id.eq.${sessionUserId}`),
         supabase.from('battles').select('*', { count: 'exact', head: true })
-          .eq('winner_id', $currentUser.id),
+          .eq('winner_id', sessionUserId),
         supabase.from('user_cards').select('*', { count: 'exact', head: true })
-          .eq('user_id', $currentUser.id),
+          .eq('user_id', sessionUserId),
         supabase.from('user_cards').select('*', { count: 'exact', head: true })
-          .eq('user_id', $currentUser.id).eq('tier', 'mastered'),
+          .eq('user_id', sessionUserId).eq('tier', 'mastered'),
       ]);
 
     stats = {
@@ -64,7 +96,7 @@
         return;
       }
       await supabase.from('users').update({ leetcode_username: leetcodeUsername }).eq('id', $currentUser.id);
-      currentUser.update((u) => u ? { ...u, leetcodeUsername } : u);
+      currentUser.update((u) => u ? { ...u, leetcodeUsername, leetcode_username: leetcodeUsername } as any : u);
       notify('success', `Connected to @${leetcodeUsername} on LeetCode!`);
     } catch (e: any) {
       notify('error', e.message);
@@ -151,13 +183,13 @@
       <div class="flex items-center justify-between bg-gray-800/50 rounded-xl px-4 py-3">
         <div>
           <p class="text-sm font-medium">
-            {$currentUser.leetcodeUsername ? `@${$currentUser.leetcodeUsername}` : 'No account connected'}
+            {connectedLeetCodeUsername ? `@${connectedLeetCodeUsername}` : 'No account connected'}
           </p>
           <p class="text-xs text-gray-500">Last synced: {formatDate(lastSynced)}</p>
         </div>
         <button
           on:click={triggerSync}
-          disabled={syncing || !$currentUser.leetcodeUsername}
+          disabled={syncing || !connectedLeetCodeUsername}
           class="px-4 py-2 bg-green-700 hover:bg-green-600 text-white font-bold rounded-lg text-sm transition-colors disabled:opacity-40"
         >
           <span class="inline-flex items-center gap-1.5"><RefreshCw size={14} /> {syncing ? 'Syncing...' : 'Sync Now'}</span>
