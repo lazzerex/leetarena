@@ -145,6 +145,12 @@ API:
 - pnpm dev
 - pnpm build
 - pnpm deploy
+- pnpm seed:core-catalog
+
+Core catalog seed (IDs 1-300):
+- Uses trusted LeetCode sources and upserts into `public.cards`.
+- Requires `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `apps/api/.dev.vars`.
+- Run with: `pnpm --filter @leetarena/api seed:core-catalog`
 
 ## Deployment
 
