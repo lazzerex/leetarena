@@ -204,7 +204,7 @@
 
       <p class="text-xs text-gray-600 mt-3">
         Auto-sync runs daily at midnight. Manual sync is limited to once per hour.
-        LeetCode runtime percentile ≥ 80% upgrades cards to Mastered tier.
+        LeetCode currently returns up to 20 recent accepted submissions per sync from the trusted source.
       </p>
     </div>
 
