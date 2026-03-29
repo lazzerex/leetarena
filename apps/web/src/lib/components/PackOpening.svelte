@@ -54,7 +54,7 @@
             <div in:scale={{ duration: 400, delay: 50 }} class="relative">
               <Card
                 title={card.title}
-                titleSlug={card.id}
+                titleSlug={card.titleSlug}
                 rarity={card.rarity}
                 elementType={card.elementType}
                 baseAtk={card.baseAtk}
