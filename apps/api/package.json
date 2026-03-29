@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "seed:core-catalog": "node ./scripts/seed-core-catalog.mjs"
   },
   "dependencies": {
     "@leetarena/types": "workspace:*",
