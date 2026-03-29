@@ -30,7 +30,7 @@ cardRoutes.get('/collection/:userId', async (c) => {
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
 
   const userCards = await (await db.from('user_cards')).select(
-    'id,tier,equipped_algo_1,equipped_algo_2,obtained_at,cards(*)',
+    'id,tier,equipped_algo_1,equipped_algo_2,obtained_at,card:cards(*)',
     { user_id: `eq.${userId}` }
   );
 
