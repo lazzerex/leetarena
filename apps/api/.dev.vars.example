@@ -1,0 +1,15 @@
+# ─── LeetArena API (apps/api) ────────────────────────────────────────────────
+# For local dev, create a .dev.vars file in apps/api/ with these values.
+# For production, set secrets via: wrangler secret put SECRET_NAME
+
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
+
+UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your-upstash-token
+
+QSTASH_TOKEN=your-qstash-token
+
+RESEND_API_KEY=re_your-resend-key
+
+FRONTEND_URL=https://leetarena.vercel.app
