@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { authHydrated, currentUser } from '$lib/stores';
+  import { authHydrated, currentUser, hasAuthSession } from '$lib/stores';
   import { notify } from '$lib/stores';
   import { supabase } from '$lib/supabase';
   import Home from 'lucide-svelte/icons/home';
@@ -42,6 +42,7 @@
     if (signingOut) return;
     signingOut = true;
     try {
+      hasAuthSession.set(false);
       currentUser.set(null);
       await tryLocalSignOutWithTimeout();
       await goto('/login', { replaceState: true });
@@ -82,18 +83,25 @@
     <div class="flex items-center gap-3">
       {#if !$authHydrated}
         <div class="h-8 w-28 rounded-lg bg-gray-800/70 border border-gray-700/80"></div>
-      {:else if $currentUser}
+      {:else if $hasAuthSession}
         <div class="flex items-center gap-2">
-          <span class="text-sky-200 text-sm font-bold inline-flex items-center gap-1.5">
-            <Coins size={14} /> {$currentUser.coins.toLocaleString()}
-          </span>
-          <span class="text-gray-400 text-sm hidden sm:inline">
-            #{$currentUser.rating}
-          </span>
-          <a href="/profile" class="text-sm text-gray-300 hover:text-white transition-colors inline-flex items-center gap-1.5">
-            <UserRound size={14} />
-            {$currentUser.username}
-          </a>
+          {#if $currentUser}
+            <span class="text-sky-200 text-sm font-bold inline-flex items-center gap-1.5">
+              <Coins size={14} /> {$currentUser.coins.toLocaleString()}
+            </span>
+            <span class="text-gray-400 text-sm hidden sm:inline">
+              #{$currentUser.rating}
+            </span>
+            <a href="/profile" class="text-sm text-gray-300 hover:text-white transition-colors inline-flex items-center gap-1.5">
+              <UserRound size={14} />
+              {$currentUser.username}
+            </a>
+          {:else}
+            <a href="/profile" class="text-sm text-gray-300 hover:text-white transition-colors inline-flex items-center gap-1.5">
+              <UserRound size={14} />
+              Account
+            </a>
+          {/if}
           <button
             type="button"
             on:click={signOut}
