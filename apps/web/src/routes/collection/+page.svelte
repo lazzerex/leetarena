@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { currentUser, userCollection, notify } from '$lib/stores';
   import { api } from '$lib/api';
+  import { buildLeetCodeProblemUrl } from '$lib/leetcode';
   import Card from '$lib/components/Card.svelte';
   import LoaderCircle from 'lucide-svelte/icons/loader-circle';
   import Layers3 from 'lucide-svelte/icons/layers-3';
@@ -197,12 +198,12 @@
       </div>
 
       <a
-        href="https://leetcode.com/problems/{card.title_slug ?? card.titleSlug}/"
+        href={buildLeetCodeProblemUrl(card.title_slug ?? card.titleSlug)}
         target="_blank"
         rel="noopener noreferrer"
         class="mt-4 w-full block text-center py-2 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl text-sm transition-colors"
       >
-        Solve on LeetCode ↗
+        View on LeetCode ↗
       </a>
 
       <button
