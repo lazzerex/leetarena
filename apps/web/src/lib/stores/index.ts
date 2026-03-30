@@ -7,6 +7,7 @@ import type { Rarity, Element } from '@leetarena/types';
 export const currentUser = writable<User | null>(null);
 export const isAuthenticated = derived(currentUser, ($u) => $u !== null);
 export const authHydrated = writable(false);
+export const hasAuthSession = writable(false);
 
 // ─── Collection Store ─────────────────────────────────────────────────────────
 
