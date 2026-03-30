@@ -5,6 +5,8 @@ import { syncRoutes } from './routes/sync';
 import { packRoutes } from './routes/packs';
 import { battleRoutes } from './routes/battle';
 import { cardRoutes } from './routes/cards';
+import { dailySyncCron } from './cron/daily-sync';
+import { revalidateCatalogManifestCron } from './cron/catalog-revalidate';
 
 export type Env = {
   SUPABASE_URL: string;
@@ -14,6 +16,10 @@ export type Env = {
   QSTASH_TOKEN: string;
   RESEND_API_KEY: string;
   FRONTEND_URL: string;
+  LEETCODE_SYNC_ENABLED?: string;
+  LEETCODE_EXTENDED_SYNC_ENABLED?: string;
+  PACK_VARIETY_MODE_ENABLED?: string;
+  RANKED_CORE_ONLY?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -64,4 +70,20 @@ app.onError((err, c) => {
   return c.json({ error: message }, status);
 });
 
-export default app;
+const DAILY_SYNC_CRON = '0 0 * * *';
+const CATALOG_REVALIDATE_CRON = '30 0 * * *';
+
+const worker: ExportedHandler<Env> = {
+  fetch: app.fetch,
+  scheduled(event, env, ctx) {
+    if (event.cron === DAILY_SYNC_CRON) {
+      ctx.waitUntil(dailySyncCron(env));
+    }
+
+    if (event.cron === CATALOG_REVALIDATE_CRON) {
+      ctx.waitUntil(revalidateCatalogManifestCron());
+    }
+  },
+};
+
+export default worker;
