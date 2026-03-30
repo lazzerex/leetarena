@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { env } from '$env/dynamic/public';
   import { currentUser, packRevealCards, packRevealOpen, notify } from '$lib/stores';
   import { api } from '$lib/api';
   import SunMedium from 'lucide-svelte/icons/sun-medium';
@@ -71,6 +72,9 @@
 
   let opening: string | null = null;
   let selectedElement = 'Array';
+  let includeExtendedPool = false;
+
+  const extendedPacksEnabled = env.PUBLIC_ENABLE_EXTENDED_PACKS === 'true';
 
   const elements = ['Array', 'Graph', 'Tree', 'Math', 'DynamicProgramming', 'String'];
 
@@ -87,7 +91,12 @@
     opening = packId;
     try {
       const elementFilter = packId === 'topic' ? selectedElement : undefined;
-      const result = await api.openPack($currentUser.id, packId, elementFilter);
+      const result = await api.openPack(
+        $currentUser.id,
+        packId,
+        elementFilter,
+        includeExtendedPool && extendedPacksEnabled
+      );
 
       // Populate pack reveal store
       packRevealCards.set(
@@ -107,6 +116,10 @@
 
       // Deduct coins from local store
       currentUser.update((u) => u ? { ...u, coins: u.coins - result.coinsSpent } : u);
+
+      if (result.usedExtendedPool) {
+        notify('info', 'Variety mode enabled: this pack may include extended catalog cards.');
+      }
     } catch (e: any) {
       notify('error', e.message ?? 'Failed to open pack');
     } finally {
@@ -121,7 +134,25 @@
   <div class="mb-8">
     <h1 class="text-3xl font-black">Pack Shop</h1>
     <p class="text-gray-500 mt-1">Open packs to grow your collection. Solve problems to power up your cards.</p>
+    <div class="mt-4 bg-gray-900 border border-gray-800 rounded-xl p-4 text-sm text-gray-300 space-y-1">
+      <p>Default packs use the curated core catalog (LeetCode #1-#300).</p>
+      <p>Solve sync unlocks and upgrades curated core cards by default.</p>
+      <p>When variety mode is enabled, non-core problems can appear as extended catalog cards.</p>
+    </div>
   </div>
+
+  {#if extendedPacksEnabled}
+    <div class="mb-6 bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center justify-between gap-4">
+      <div>
+        <p class="font-semibold text-white">Variety Mode</p>
+        <p class="text-sm text-gray-400">Allow extended catalog cards in pack generation.</p>
+      </div>
+      <label class="inline-flex items-center gap-2 text-sm text-gray-300">
+        <input type="checkbox" bind:checked={includeExtendedPool} class="accent-amber-400" />
+        Include extended pool
+      </label>
+    </div>
+  {/if}
 
   {#if $currentUser}
     <div class="flex items-center gap-2 mb-8 bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 w-fit">
