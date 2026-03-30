@@ -15,3 +15,6 @@ compatibility_flags = ["nodejs_compat"]
 [[routes]]
 pattern = "api.leetarena.dev/*"
 zone_name = "leetarena.dev"
+
+[triggers]
+crons = ["0 0 * * *", "30 0 * * *"]
