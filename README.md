@@ -1,19 +1,24 @@
 # LeetArena
- 
+
 <p align="center">
-  
+
  <img width="328" height="335" alt="image-removebg-preview (2)" src="https://github.com/user-attachments/assets/f02ebcb5-a79c-41d7-b53e-0e8675cd6b6e" />
 
 </p>
- 
+
 <p align="center">
   <img src="https://img.shields.io/badge/SvelteKit-FF3E00?style=flat&logo=svelte&logoColor=white"/>
   <img src="https://img.shields.io/badge/Hono-E36002?style=flat&logo=hono&logoColor=white"/>
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat&logo=node.js&logoColor=white"/>
+  <img src="https://img.shields.io/badge/pnpm-9-F69220?style=flat&logo=pnpm&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=flat&logo=tailwindcss&logoColor=white"/>
   <img src="https://img.shields.io/badge/Cloudflare%20Workers-F38020?style=flat&logo=cloudflare&logoColor=white"/>
   <img src="https://img.shields.io/badge/Supabase-3ECF8E?style=flat&logo=supabase&logoColor=white"/>
+  <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat&logo=postgresql&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Vercel-000000?style=flat&logo=vercel&logoColor=white"/>
 </p>
- 
+
 <p align="center">
   <img src="https://img.shields.io/github/stars/lazzerex/leetarena?style=flat&logo=github"/>
   <img src="https://img.shields.io/github/forks/lazzerex/leetarena?style=flat&logo=github"/>
@@ -23,52 +28,67 @@
   <img src="https://img.shields.io/badge/Status-Active%20MVP-orange?style=flat"/>
   <img src="https://img.shields.io/badge/Real--time-Supabase%20Realtime-blue?style=flat&logo=supabase"/>
 </p>
- 
+
 <p align="center">
-  <strong>A trading card game built on LeetCode problems. Collect cards, build decks, and battle other developers</strong>
+  <strong>A WIP trading card game where LeetCode problems become collectible battle cards.</strong>
 </p>
 
-## Current State
+LeetArena blends coding practice with card-game progression. You can solve problems, strengthen your collection, and battle other players.
 
-This repository is an active MVP with working foundations and known gaps.
+## What Is LeetArena?
 
-Implemented now:
-- Monorepo with SvelteKit web app, Hono API, shared TypeScript package.
-- Supabase schema with core entities: users, cards, user_cards, algorithm_cards, decks, battles, packs, leetcode_sync, matchmaking_queue.
-- API routes for sync, packs, battle, and cards.
-- Web routes for login, packs, collection, deck builder, battle lobby, leaderboard, and profile.
-- Pack opening flow with rarity rolling and pity counter scaffolding.
-- OAuth auth via Supabase (GitHub/Google) for app identity.
+Core idea:
+- LeetCode problems are represented as cards with stats and element types.
+- Players open packs, build decks, and play battles.
+- Solving problems can unlock and upgrade card progression.
 
-Partially implemented / planned:
-- Full server-authoritative battle state machine.
-- Complete matchmaking orchestration.
-- Quests and achievements persistence.
-- Advanced algorithm/data-structure card gameplay.
-- Optional LeetCode sync hardening.
+Gameplay pillars:
+- Problem cards + algorithm cards.
+- Type-based matchup system for battle decisions.
+- Curated core catalog for balance, with optional extended variety mode.
+- Optional, user-consented LeetCode sync.
 
+## Tech Stack
 
-## Product and Compliance Direction
+- Frontend: SvelteKit + TypeScript + Tailwind CSS
+- API: Hono on Cloudflare Workers
+- Database/Auth/Realtime: Supabase
+- Shared domain types: pnpm workspace package
 
-- LeetArena is LeetCode-based, not a full LeetCode interface.
-- Core progression must work without requiring LeetCode account sync.
-- Any LeetCode sync is optional and compliance-sensitive.
-- Do not rely on private/disallowed automation against LeetCode endpoints.
+## Technical Highlights
 
-## Architecture
+- Manifest-governed catalog pipeline with versioned contract, premium exclusion checks, and promotion-blocking validation.
+- Scheduled drift detection on Cloudflare Worker cron to revalidate catalog integrity over time.
+- Provenance-aware card governance using `catalog_type`, `is_seeded_core`, and `catalog_version` to protect ranked and pack balance.
+- Feature-flagged runtime controls for sync, extended catalog ingestion, pack variety mode, and ranked core-only enforcement.
+- Type-safe API boundaries with shared TypeScript domain contracts and route-level input validation.
+- Supabase security model with row-level security policies and explicit service-role write path for backend operations.
+- Realtime-ready battle architecture with published tables for battle and queue synchronization.
 
-- apps/web: SvelteKit frontend (Vercel target)
-- apps/api: Hono API on Cloudflare Workers
-- packages/types: shared TypeScript models/constants
-- supabase-schema.sql: DB bootstrap and policies
+## Architecture Snapshot
 
-## Getting Started
+```text
+SvelteKit Web (apps/web)
+  -> Hono API on Cloudflare Workers (apps/api)
+  -> Supabase Postgres + Auth + Realtime
+  -> Shared game types (packages/types)
+
+Catalog Governance:
+  manifest generate -> manifest validate -> seed core catalog -> scheduled drift revalidate
+```
+
+## Monorepo Layout
+
+- apps/web: SvelteKit frontend
+- apps/api: Hono Worker API
+- packages/types: shared game types/constants
+
+## Quick Start
 
 ### Prerequisites
 - Node.js >= 20
 - pnpm >= 9
-- Supabase account
-- Cloudflare account (for API deploy)
+- Supabase project
 
 ### Install
 
@@ -76,40 +96,42 @@ Partially implemented / planned:
 pnpm install
 ```
 
-### Database
-Run supabase-schema.sql in Supabase SQL editor.
+### Configure Database
+- Configure the required tables, indexes, and policies in your Supabase project before running the app.
 
-### Environment
+### Configure Environment
 
-Web:
-- Copy apps/web/.env.example to apps/web/.env
-- Set:
+Web app:
+- Copy apps/web/.env.example -> apps/web/.env
+- Required variables:
   - PUBLIC_SUPABASE_URL
   - PUBLIC_SUPABASE_ANON_KEY
   - PUBLIC_API_URL
+- Optional:
+  - PUBLIC_ENABLE_EXTENDED_PACKS
 
 API:
-- Copy apps/api/.dev.vars.example to apps/api/.dev.vars
-- Set:
+- Copy apps/api/.dev.vars.example -> apps/api/.dev.vars
+- Required variables:
   - SUPABASE_URL
   - SUPABASE_SERVICE_ROLE_KEY
   - FRONTEND_URL
-- Optional for future integrations:
-  - UPSTASH_REDIS_REST_URL
-  - UPSTASH_REDIS_REST_TOKEN
-  - QSTASH_TOKEN
-  - RESEND_API_KEY
+- Feature flags:
+  - LEETCODE_SYNC_ENABLED
+  - LEETCODE_EXTENDED_SYNC_ENABLED
+  - PACK_VARIETY_MODE_ENABLED
+  - RANKED_CORE_ONLY
 
-### Run locally
-
-From the repo root, open two terminals.
+### Run Locally
 
 Terminal 1 (API):
+
 ```bash
 pnpm --filter @leetarena/api dev
 ```
 
 Terminal 2 (Web):
+
 ```bash
 pnpm --filter @leetarena/web dev
 ```
@@ -118,13 +140,13 @@ Local URLs:
 - Web: http://localhost:5173
 - API health: http://localhost:8787/health
 
-### Troubleshooting Local Start
+## Catalog Workflow
 
-- If VS Code still shows old module errors, run:
-  1. `TypeScript: Restart TS Server`
-  2. `Developer: Reload Window`
-- If `pnpm` is not recognized in a terminal, open a new terminal session after installation.
-- If port 5173 or 8787 is busy, stop previous dev servers before restarting.
+Core catalog is manifest-driven:
+- Source of truth: apps/api/catalog/core-manifest.v1.json
+- Generate manifest: pnpm --filter @leetarena/api catalog:manifest:generate
+- Validate manifest: pnpm --filter @leetarena/api catalog:manifest:validate
+- Seed catalog: pnpm --filter @leetarena/api seed:core-catalog
 
 ## Scripts
 
@@ -145,44 +167,21 @@ API:
 - pnpm dev
 - pnpm build
 - pnpm deploy
+- pnpm catalog:manifest:generate
+- pnpm catalog:manifest:validate
 - pnpm seed:core-catalog
-
-Core catalog seed (IDs 1-300):
-- Uses trusted LeetCode sources and upserts into `public.cards`.
-- Requires `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `apps/api/.dev.vars`.
-- Run with: `pnpm --filter @leetarena/api seed:core-catalog`
 
 ## Deployment
 
 API (Cloudflare Workers):
-1. Configure worker secrets with wrangler secret put.
-2. cd apps/api && pnpm deploy.
+1. Configure worker secrets.
+2. Deploy from apps/api.
 
 Web (Vercel):
-1. Import repo with root directory apps/web.
-2. Set public env vars.
+1. Import repository with apps/web as project root.
+2. Configure public environment variables.
 3. Deploy.
 
-## Roadmap (Implementation Plan Summary)
+## License
 
-Phase 1: Foundation hardening
-- API auth and ownership checks.
-- Robust API error handling and typed responses.
-- Correct battle reward/rating persistence.
-
-Phase 2: Gameplay completion
-- Full battle state machine and round progression.
-- Matchmaking orchestration and realtime parity.
-- Backend and frontend deck-rule parity.
-
-Phase 3: Progression expansion
-- Quests/achievements persistence.
-- Algorithm/data-structure card systems.
-- Reliable leaderboard metrics.
-
-Phase 4: Optional LeetCode enhancements
-- User-consented sync mode.
-- Compliance-safe verification approach.
-
-## Notes
-- This README reflects the implementation plan and current repository state as of 2026-03-25.
+MIT (or project-specific license when added).
