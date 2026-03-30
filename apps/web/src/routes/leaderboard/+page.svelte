@@ -4,9 +4,12 @@
   import { currentUser } from '$lib/stores';
   import LoaderCircle from 'lucide-svelte/icons/loader-circle';
 
+  const QUERY_TIMEOUT_MS = 10000;
+
   let tab: 'rating' | 'mastered' | 'solves' = 'rating';
   let leaders: any[] = [];
   let loading = true;
+  let requestId = 0;
 
   const tabs = [
     { id: 'rating', label: 'Battle Rating', col: 'rating' },
@@ -14,17 +17,45 @@
     { id: 'solves', label: 'Most Solves', col: 'solve_count' },
   ] as const;
 
+  function withTimeout<T>(promiseLike: PromiseLike<T>, timeoutMs = QUERY_TIMEOUT_MS): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const id = setTimeout(() => reject(new Error('Leaderboard request timed out')), timeoutMs);
+      Promise.resolve(promiseLike)
+        .then((result) => {
+          clearTimeout(id);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(id);
+          reject(error);
+        });
+    });
+  }
+
   async function loadLeaderboard() {
+    const currentRequest = ++requestId;
     loading = true;
     try {
-      let query = supabase.from('users').select('id, username, rating, coins').limit(50);
+      let query = supabase.from('users').select('id, username, rating, coins, solve_count').limit(50);
       if (tab === 'rating') query = query.order('rating', { ascending: false });
       else if (tab === 'solves') query = query.order('solve_count', { ascending: false });
 
-      const { data } = await query;
-      leaders = data ?? [];
-    } catch {}
-    loading = false;
+      const { data, error } = await withTimeout<{ data: any[] | null; error: any }>(
+        query as PromiseLike<{ data: any[] | null; error: any }>
+      );
+      if (error) throw error;
+      if (currentRequest === requestId) {
+        leaders = data ?? [];
+      }
+    } catch {
+      if (currentRequest === requestId) {
+        leaders = [];
+      }
+    } finally {
+      if (currentRequest === requestId) {
+        loading = false;
+      }
+    }
   }
 
   onMount(loadLeaderboard);
