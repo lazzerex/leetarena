@@ -1,6 +1,8 @@
 import { PUBLIC_API_URL } from '$env/static/public';
 import { supabase } from '$lib/supabase';
 
+const API_TIMEOUT_MS = 12000;
+
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const {
     data: { session },
@@ -13,11 +15,26 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     headers.set('Authorization', `Bearer ${session.access_token}`);
   }
 
-  const res = await fetch(`${PUBLIC_API_URL}${path}`, {
-    ...options,
-    headers,
-    credentials: 'include',
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${PUBLIC_API_URL}${path}`, {
+      ...options,
+      headers,
+      credentials: 'include',
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Request timed out. Please try again.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error((err as { error: string }).error ?? 'API error');
@@ -30,13 +47,24 @@ export const api = {
   verifyLeetCode: (username: string) =>
     apiFetch<{ valid: boolean; username?: string }>(`/sync/verify/${username}`),
   triggerSync: (userId: string) =>
-    apiFetch<{ synced: number }>(`/sync/trigger/${userId}`, { method: 'POST' }),
+    apiFetch<{
+      synced: number;
+      unlocked: number;
+      upgraded: number;
+      skippedOutOfCatalog: number;
+      extendedCatalogEnabled: boolean;
+    }>(`/sync/trigger/${userId}`, { method: 'POST' }),
 
   // Packs
-  openPack: (userId: string, packType: string, elementFilter?: string) =>
-    apiFetch<{ cards: unknown[]; rarities: string[]; coinsSpent: number }>('/packs/open', {
+  openPack: (userId: string, packType: string, elementFilter?: string, includeExtendedPool = false) =>
+    apiFetch<{
+      cards: unknown[];
+      rarities: string[];
+      coinsSpent: number;
+      usedExtendedPool: boolean;
+    }>('/packs/open', {
       method: 'POST',
-      body: JSON.stringify({ userId, packType, elementFilter }),
+      body: JSON.stringify({ userId, packType, elementFilter, includeExtendedPool }),
     }),
 
   // Cards
