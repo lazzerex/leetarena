@@ -17,7 +17,13 @@
   let verifying = false;
   let syncing = false;
   let lastSynced: string | null = null;
-  let syncResult: { synced: number } | null = null;
+  let syncResult: {
+    synced: number;
+    unlocked: number;
+    upgraded: number;
+    skippedOutOfCatalog: number;
+    extendedCatalogEnabled: boolean;
+  } | null = null;
   let stats = { wins: 0, battles: 0, collection: 0, mastered: 0 };
 
   function getLeetCodeUsername(user: any): string {
@@ -111,7 +117,7 @@
     try {
       syncResult = await api.triggerSync($currentUser.id);
       lastSynced = new Date().toISOString();
-      notify('success', `Synced ${syncResult.synced} new solve${syncResult.synced !== 1 ? 's' : ''}!`);
+      notify('success', `Sync complete: ${syncResult.synced} new solve${syncResult.synced !== 1 ? 's' : ''} processed.`);
     } catch (e: any) {
       notify('error', e.message ?? 'Sync failed');
     } finally {
@@ -162,7 +168,7 @@
     <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
       <h2 class="font-black text-lg mb-1">LeetCode Sync</h2>
       <p class="text-gray-500 text-sm mb-4">
-        Connect your LeetCode account to automatically upgrade cards when you solve problems.
+        Connect your LeetCode account to unlock and upgrade curated core catalog cards when you solve problems.
       </p>
 
       <div class="flex gap-2 mb-4">
@@ -200,11 +206,18 @@
         <div class="mt-3 text-green-400 text-sm font-medium">
           <span class="inline-flex items-center gap-1.5"><CircleCheckBig size={14} /> Synced {syncResult.synced} new submission{syncResult.synced !== 1 ? 's' : ''}</span>
         </div>
+        <div class="mt-2 text-xs text-gray-400 space-y-1">
+          <p>Unlocked: {syncResult.unlocked} · Upgraded: {syncResult.upgraded}</p>
+          <p>
+            Non-core submissions skipped: {syncResult.skippedOutOfCatalog}
+            {syncResult.extendedCatalogEnabled ? ' (extended catalog enabled)' : ' (extended catalog disabled)'}
+          </p>
+        </div>
       {/if}
 
       <p class="text-xs text-gray-600 mt-3">
-        Auto-sync runs daily at midnight. Manual sync is limited to once per hour.
-        LeetCode currently returns up to 20 recent accepted submissions per sync from the trusted source.
+        Sync is optional and only runs for users who connect and verify their LeetCode username.
+        Solving non-core problems only unlocks extended catalog cards when the server enables variety mode.
       </p>
     </div>
 
