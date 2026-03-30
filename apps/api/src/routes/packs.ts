@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Env } from '../index';
 import { createSupabase } from '../lib/supabase';
 import { getAuthenticatedUser, isOwner } from '../lib/auth';
+import { getPackFeatureFlags } from '../lib/feature-flags';
 import { rollPackRarities } from '../lib/rng';
 import type { PackType, Rarity } from '@leetarena/types';
 import { PACK_COSTS } from '@leetarena/types';
@@ -13,6 +14,7 @@ const OpenPackSchema = z.object({
   userId: z.string().uuid(),
   packType: z.enum(['daily', 'topic', 'blind75', 'contest', 'company']),
   elementFilter: z.string().optional(), // for topic packs
+  includeExtendedPool: z.boolean().optional(),
 });
 
 packRoutes.post('/open', async (c) => {
@@ -20,11 +22,14 @@ packRoutes.post('/open', async (c) => {
   const parsed = OpenPackSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
-  const { userId, packType, elementFilter } = parsed.data;
+  const { userId, packType, elementFilter, includeExtendedPool } = parsed.data;
 
   const authUser = await getAuthenticatedUser(c);
   if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
   if (!isOwner(authUser, userId)) return c.json({ error: 'Forbidden' }, 403);
+
+  const { varietyModeEnabled } = getPackFeatureFlags(c.env);
+  const useExtendedPool = varietyModeEnabled && includeExtendedPool === true;
 
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -71,7 +76,14 @@ packRoutes.post('/open', async (c) => {
   const cardIds: string[] = [];
   const missingRarities: Rarity[] = [];
   for (const rarity of rarities) {
-    const card = await pickCardForRarity(rarity, userId, packType as PackType, elementFilter, db);
+    const card = await pickCardForRarity(
+      rarity,
+      userId,
+      packType as PackType,
+      elementFilter,
+      useExtendedPool,
+      db
+    );
     if (!card) {
       missingRarities.push(rarity);
       continue;
@@ -126,7 +138,12 @@ packRoutes.post('/open', async (c) => {
     id: `in.(${cardIds.join(',')})`,
   })) as any[];
 
-  return c.json({ cards, rarities, coinsSpent: typeof cost === 'number' ? cost : 0 });
+  return c.json({
+    cards,
+    rarities,
+    coinsSpent: typeof cost === 'number' ? cost : 0,
+    usedExtendedPool: useExtendedPool,
+  });
 });
 
 async function pickCardForRarity(
@@ -134,9 +151,14 @@ async function pickCardForRarity(
   userId: string,
   packType: PackType,
   elementFilter: string | undefined,
+  includeExtendedPool: boolean,
   db: any
 ): Promise<{ id: string } | null> {
   const filters: Record<string, string> = { rarity: `eq.${rarity}` };
+  if (!includeExtendedPool) {
+    filters['catalog_type'] = 'eq.core';
+    filters['is_seeded_core'] = 'eq.true';
+  }
   if (elementFilter) filters['element_type'] = `eq.${elementFilter}`;
   if (packType === 'blind75') filters['is_blind75'] = 'eq.true';
 
