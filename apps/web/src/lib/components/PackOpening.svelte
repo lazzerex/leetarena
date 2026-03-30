@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fly, scale } from 'svelte/transition';
   import { flip } from 'svelte/animate';
+  import { buildLeetCodeProblemUrl } from '$lib/leetcode';
   import Card from './Card.svelte';
   import { packRevealCards, packRevealOpen } from '$lib/stores';
   import Swords from 'lucide-svelte/icons/swords';
@@ -51,7 +52,7 @@
       {#each cards as card, i (card.id)}
         <div animate:flip={{ duration: 300 }}>
           {#if i <= revealIndex}
-            <div in:scale={{ duration: 400, delay: 50 }} class="relative">
+            <div in:scale={{ duration: 400, delay: 50 }} class="relative text-center">
               <Card
                 title={card.title}
                 titleSlug={card.titleSlug}
@@ -68,6 +69,14 @@
                   NEW
                 </div>
               {/if}
+              <a
+                href={buildLeetCodeProblemUrl(card.titleSlug)}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-2 inline-block text-xs text-amber-300 hover:text-amber-200 underline"
+              >
+                View on LeetCode
+              </a>
             </div>
           {:else}
             <!-- Hidden card back -->
