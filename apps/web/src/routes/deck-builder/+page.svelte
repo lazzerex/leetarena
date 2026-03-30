@@ -4,6 +4,7 @@
            addToDeck, removeFromDeck, notify } from '$lib/stores';
   import { api } from '$lib/api';
   import { supabase } from '$lib/supabase';
+  import { buildLeetCodeProblemUrl } from '$lib/leetcode';
   import Card from '$lib/components/Card.svelte';
   import LoaderCircle from 'lucide-svelte/icons/loader-circle';
 
@@ -170,6 +171,14 @@
                 <p class="text-sm font-medium truncate">{card.title}</p>
                 <p class="text-xs text-gray-500">{card.element_type ?? card.elementType} · {card.rarity}</p>
               </div>
+              <a
+                href={buildLeetCodeProblemUrl(card.title_slug ?? card.titleSlug)}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-xs text-amber-300 hover:text-amber-200 underline"
+              >
+                View
+              </a>
               <button
                 on:click={() => removeFromDeck(uc.id)}
                 class="text-gray-600 hover:text-red-400 text-lg leading-none transition-colors"
