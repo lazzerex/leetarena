@@ -10,3 +10,6 @@ dist/
 .DS_Store
 Thumbs.db
 .vercel/
+
+# Generated catalog report artifacts (runtime outputs)
+apps/api/catalog/reports/*.json
