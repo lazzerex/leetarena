@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Env } from '../index';
 import { createSupabase } from '../lib/supabase';
 import { getAuthenticatedUser, isOwner } from '../lib/auth';
+import { getBattleFeatureFlags } from '../lib/feature-flags';
 import { getTypeMultiplier } from '@leetarena/types';
 import type { BattleRound, BattleRewards } from '@leetarena/types';
 
@@ -38,6 +39,7 @@ battleRoutes.post('/create', async (c) => {
 
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
   const { player1Id, player2Id, deck1Id, deck2Id } = parsed.data;
+  const { rankedCoreOnly } = getBattleFeatureFlags(c.env);
 
   if (!isOwner(authUser, player1Id)) {
     return c.json({ error: 'Forbidden: player1Id must match authenticated user' }, 403);
@@ -61,8 +63,8 @@ battleRoutes.post('/create', async (c) => {
     return c.json({ error: 'Deck 2 does not belong to player 2' }, 400);
   }
 
-  const validationError1 = await validateDeck(deck1.card_ids ?? [], player1Id, db);
-  const validationError2 = await validateDeck(deck2.card_ids ?? [], player2Id, db);
+  const validationError1 = await validateDeck(deck1.card_ids ?? [], player1Id, rankedCoreOnly, db);
+  const validationError2 = await validateDeck(deck2.card_ids ?? [], player2Id, rankedCoreOnly, db);
   if (validationError1) return c.json({ error: `Deck 1: ${validationError1}` }, 400);
   if (validationError2) return c.json({ error: `Deck 2: ${validationError2}` }, 400);
 
@@ -235,14 +237,19 @@ async function getDeckById(deckId: string, db: any) {
   return decks[0] ?? null;
 }
 
-async function validateDeck(cardIds: string[], ownerId: string, db: any): Promise<string | null> {
+async function validateDeck(
+  cardIds: string[],
+  ownerId: string,
+  enforceCoreOnly: boolean,
+  db: any
+): Promise<string | null> {
   if (cardIds.length !== 10) return 'Deck must have exactly 10 cards';
 
   const uniqueCardIds = new Set(cardIds);
   if (uniqueCardIds.size !== 10) return 'Deck cannot contain duplicate cards';
 
   const userCards = await (await db.from('user_cards')).select<any[]>(
-    'id,cards(element_type)',
+    'id,cards(element_type,catalog_type,is_seeded_core)',
     {
       user_id: `eq.${ownerId}`,
       id: `in.(${cardIds.join(',')})`,
@@ -263,6 +270,17 @@ async function validateDeck(cardIds: string[], ownerId: string, db: any): Promis
     return 'Deck must include at least 2 different element types';
   }
 
+  if (enforceCoreOnly) {
+    const hasExtendedCard = userCards.some((card) => {
+      const catalogType = readCatalogType(card.cards);
+      const isSeededCore = readIsSeededCore(card.cards);
+      return !(catalogType === 'core' && isSeededCore);
+    });
+    if (hasExtendedCard) {
+      return 'Ranked mode is core-only. Remove extended catalog cards from this deck';
+    }
+  }
+
   return null;
 }
 
@@ -272,6 +290,22 @@ function readElementType(cardsField: unknown): string | null {
     return (cardsField as { element_type?: string }).element_type ?? null;
   }
   return null;
+}
+
+function readCatalogType(cardsField: unknown): string {
+  if (Array.isArray(cardsField)) return cardsField[0]?.catalog_type ?? 'core';
+  if (cardsField && typeof cardsField === 'object') {
+    return (cardsField as { catalog_type?: string }).catalog_type ?? 'core';
+  }
+  return 'core';
+}
+
+function readIsSeededCore(cardsField: unknown): boolean {
+  if (Array.isArray(cardsField)) return Boolean(cardsField[0]?.is_seeded_core);
+  if (cardsField && typeof cardsField === 'object') {
+    return Boolean((cardsField as { is_seeded_core?: boolean }).is_seeded_core);
+  }
+  return false;
 }
 
 async function getUserCardStats(userCardId: string, db: any) {
