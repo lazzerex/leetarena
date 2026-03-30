@@ -6,6 +6,8 @@
     "dev": "wrangler dev",
     "build": "wrangler deploy --dry-run",
     "deploy": "wrangler deploy",
+    "catalog:manifest:generate": "node ./scripts/generate-core-manifest.mjs",
+    "catalog:manifest:validate": "node ./scripts/validate-core-manifest.mjs",
     "seed:core-catalog": "node ./scripts/seed-core-catalog.mjs"
   },
   "dependencies": {
