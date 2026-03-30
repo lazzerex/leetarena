@@ -4,38 +4,153 @@
   import Notifications from '$lib/components/Notifications.svelte';
   import PackOpening from '$lib/components/PackOpening.svelte';
   import { supabase } from '$lib/supabase';
-  import { authHydrated, currentUser } from '$lib/stores';
+  import { authHydrated, currentUser, hasAuthSession } from '$lib/stores';
   import { onMount } from 'svelte';
 
-  onMount(async () => {
-    try {
-      const { data } = await supabase.auth.getSession();
-      if (data.session?.user) {
-        // Fetch user profile from our users table
-        const { data: profile } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', data.session.user.id)
-          .single();
-        if (profile) currentUser.set(profile);
-      }
-    } finally {
-      authHydrated.set(true);
+  const AUTH_TIMEOUT_MS = 6000;
+
+  function withTimeout<T>(promiseLike: PromiseLike<T>, timeoutMs: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const id = setTimeout(() => reject(new Error('Auth request timed out')), timeoutMs);
+      Promise.resolve(promiseLike)
+        .then((result) => {
+          clearTimeout(id);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(id);
+          reject(error);
+        });
+    });
+  }
+
+  function toStoreUser(profile: any) {
+    return {
+      id: profile.id,
+      username: profile.username,
+      leetcodeUsername: profile.leetcode_username ?? profile.leetcodeUsername,
+      coins: Number(profile.coins ?? 0),
+      rating: Number(profile.rating ?? 1000),
+      createdAt: profile.created_at ?? profile.createdAt ?? new Date().toISOString(),
+    };
+  }
+
+  function buildFallbackUser(authUser: any) {
+    const username =
+      authUser?.user_metadata?.user_name ??
+      authUser?.user_metadata?.full_name ??
+      authUser?.email?.split('@')[0] ??
+      'trainer';
+
+    return {
+      id: authUser?.id,
+      username,
+      coins: 500,
+      rating: 1000,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  async function hydrateUserProfile(authUser: any) {
+    const { data: existingProfile, error: profileError } = await withTimeout(
+      supabase.from('users').select('*').eq('id', authUser.id).maybeSingle(),
+      AUTH_TIMEOUT_MS
+    );
+
+    if (profileError) {
+      throw profileError;
     }
 
-    supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-        if (profile) currentUser.set(profile);
-      } else {
-        currentUser.set(null);
-      }
+    if (existingProfile) {
+      return toStoreUser(existingProfile);
+    }
+
+    const username =
+      authUser.user_metadata?.user_name ??
+      authUser.user_metadata?.full_name ??
+      authUser.email?.split('@')[0] ??
+      'trainer';
+
+    const { data: createdProfile, error: createError } = await withTimeout(
+      supabase
+        .from('users')
+        .upsert(
+          {
+            id: authUser.id,
+            username,
+            coins: 500,
+            rating: 1000,
+            created_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        )
+        .select('*')
+        .single(),
+      AUTH_TIMEOUT_MS
+    );
+
+    if (createError || !createdProfile) {
+      throw createError ?? new Error('Unable to create user profile');
+    }
+
+    return toStoreUser(createdProfile);
+  }
+
+  let authRequestToken = 0;
+
+  async function applySession(session: any) {
+    const token = ++authRequestToken;
+    const authUser = session?.user;
+
+    hasAuthSession.set(Boolean(authUser));
+
+    if (!authUser) {
+      currentUser.set(null);
       authHydrated.set(true);
+      return;
+    }
+
+    try {
+      const hydratedUser = await hydrateUserProfile(authUser);
+      if (token === authRequestToken) {
+        currentUser.set(hydratedUser as any);
+      }
+    } catch {
+      if (token === authRequestToken) {
+        currentUser.set(buildFallbackUser(authUser) as any);
+      }
+    } finally {
+      if (token === authRequestToken) {
+        authHydrated.set(true);
+      }
+    }
+  }
+
+  onMount(() => {
+    const hardFallback = setTimeout(() => {
+      authHydrated.set(true);
+    }, AUTH_TIMEOUT_MS + 500);
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      void applySession(session);
     });
+
+    void (async () => {
+      try {
+        const { data } = await withTimeout(supabase.auth.getSession(), AUTH_TIMEOUT_MS);
+        await applySession(data.session);
+      } catch {
+        // Keep existing session/profile state if onAuthStateChange already hydrated it.
+        authHydrated.set(true);
+      }
+    })();
+
+    return () => {
+      clearTimeout(hardFallback);
+      subscription.unsubscribe();
+    };
   });
 </script>
 
