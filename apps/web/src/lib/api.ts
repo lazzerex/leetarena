@@ -1,5 +1,6 @@
 import { PUBLIC_API_URL } from '$env/static/public';
 import { supabase } from '$lib/supabase';
+import type { AlgorithmThemeTokens } from '@leetarena/types';
 
 const API_TIMEOUT_MS = 12000;
 
@@ -52,15 +53,42 @@ export const api = {
       unlocked: number;
       upgraded: number;
       skippedOutOfCatalog: number;
+      gemsAwarded: number;
       extendedCatalogEnabled: boolean;
     }>(`/sync/trigger/${userId}`, { method: 'POST' }),
+  targetedSync: (userId: string, titleSlug: string) =>
+    apiFetch<{
+      status: 'unlocked' | 'upgraded' | 'already_unlocked' | 'out_of_catalog' | 'no_metadata' | 'not_found';
+      titleSlug: string;
+      unlocked: number;
+      upgraded: number;
+      promotedExtendedCards: number;
+      gemsAwarded: number;
+      message?: string;
+    }>(`/sync/targeted/${userId}`, {
+      method: 'POST',
+      body: JSON.stringify({ titleSlug }),
+    }),
 
   // Packs
   openPack: (userId: string, packType: string, elementFilter?: string, includeExtendedPool = false) =>
     apiFetch<{
       cards: unknown[];
+      algorithmCards: Array<{
+        id: string;
+        slug: string;
+        name: string;
+        description: string;
+        abilityName: string;
+        abilityDescription: string;
+        mode: 'trap' | 'effect';
+        themeTemplate: string;
+        themeTokens: AlgorithmThemeTokens;
+        isNew: boolean;
+      }>;
       rarities: string[];
       coinsSpent: number;
+      duplicateCompensationCoins: number;
       usedExtendedPool: boolean;
     }>('/packs/open', {
       method: 'POST',
@@ -70,6 +98,20 @@ export const api = {
   // Cards
   getCollection: (userId: string) =>
     apiFetch<unknown[]>(`/cards/collection/${userId}`),
+  getAlgorithmCollection: (userId: string) =>
+    apiFetch<Array<{
+      id: string;
+      slug: string;
+      name: string;
+      description: string;
+      abilityName: string;
+      abilityDescription: string;
+      mode: 'trap' | 'effect';
+      tags: string[];
+      themeTemplate: string;
+      themeTokens: AlgorithmThemeTokens;
+      obtainedAt: string;
+    }>>(`/cards/algorithms/${userId}`),
   getAllCards: (filters?: Record<string, string>) => {
     const params = new URLSearchParams(filters ?? {}).toString();
     return apiFetch<unknown[]>(`/cards?${params}`);
@@ -79,7 +121,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ userId, cardId, newTier }),
     }),
-  equipAlgo: (userId: string, problemCardId: string, algoCardId: string, slot: 1 | 2) =>
+  upgradeExtendedToMastered: (userId: string, userCardId: string) =>
+    apiFetch<{
+      success: boolean;
+      newTier: 'mastered';
+      gemsSpent: number;
+      extendedGems: number;
+    }>('/cards/upgrade-extended-mastered', {
+      method: 'POST',
+      body: JSON.stringify({ userId, userCardId }),
+    }),
+  equipAlgo: (userId: string, problemCardId: string, algoCardId: string | null, slot: 1 | 2) =>
     apiFetch('/cards/equip', {
       method: 'POST',
       body: JSON.stringify({ userId, problemCardId, algoCardId, slot }),
