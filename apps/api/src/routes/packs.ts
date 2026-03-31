@@ -5,10 +5,45 @@ import { createSupabase } from '../lib/supabase';
 import { getAuthenticatedUser, isOwner } from '../lib/auth';
 import { getPackFeatureFlags } from '../lib/feature-flags';
 import { rollPackRarities } from '../lib/rng';
-import type { PackType, Rarity } from '@leetarena/types';
-import { PACK_COSTS } from '@leetarena/types';
+import { ensureCoreCollectionInitialized } from '../lib/core-collection';
+import type { AlgorithmCardDefinition, PackType, Rarity } from '@leetarena/types';
+import { ALGORITHM_CARD_CATALOG, PACK_COSTS } from '@leetarena/types';
 
 export const packRoutes = new Hono<{ Bindings: Env }>();
+
+type CardTier = 'locked' | 'base' | 'proven' | 'mastered';
+
+const CORE_DUPLICATES_TO_PROVEN = 5;
+const CORE_DUPLICATES_TO_MASTERED = 20;
+const ALGORITHM_DUPLICATE_COMPENSATION_COINS = 80;
+
+const ALGORITHM_REWARDS_PER_PACK: Record<PackType, number> = {
+  daily: 1,
+  topic: 1,
+  blind75: 2,
+  contest: 1,
+  company: 2,
+};
+
+type AlgorithmPackReward = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  abilityName: string;
+  abilityDescription: string;
+  mode: 'trap' | 'effect';
+  themeTemplate: string;
+  themeTokens: {
+    surface: string;
+    border: string;
+    accent: string;
+    chip: string;
+    text: string;
+    glow: string;
+  };
+  isNew: boolean;
+};
 
 const OpenPackSchema = z.object({
   userId: z.string().uuid(),
@@ -38,9 +73,12 @@ packRoutes.post('/open', async (c) => {
   const user = users[0];
   if (!user) return c.json({ error: 'User not found' }, 404);
 
+  await ensureCoreCollectionInitialized(userId, db);
+
   // Cost check
   const cost = PACK_COSTS[packType];
-  if (typeof cost === 'number' && user.coins < cost) {
+  const costAmount = typeof cost === 'number' ? cost : 0;
+  if (costAmount > 0 && user.coins < costAmount) {
     return c.json({ error: 'Insufficient coins' }, 402);
   }
 
@@ -101,10 +139,13 @@ packRoutes.post('/open', async (c) => {
     );
   }
 
-  // Deduct coins
-  if (typeof cost === 'number') {
+  const algorithmRewards = await drawAlgorithmRewards(userId, packType as PackType, db);
+
+  // Deduct coins and compensate algorithm duplicates in one update.
+  const finalCoins = user.coins - costAmount + algorithmRewards.duplicateCompensationCoins;
+  if (costAmount > 0 || algorithmRewards.duplicateCompensationCoins > 0) {
     await (await db.from('users')).update(
-      { coins: user.coins - cost },
+      { coins: finalCoins },
       { id: `eq.${userId}` }
     );
   }
@@ -124,27 +165,116 @@ packRoutes.post('/open', async (c) => {
     opened_at: new Date().toISOString(),
   });
 
-  // Grant cards to user collection
-  const userCards = cardIds.map((cardId) => ({
-    user_id: userId,
-    card_id: cardId,
-    tier: 'base',
-    obtained_at: new Date().toISOString(),
-  }));
-  await (await db.from('user_cards')).upsert(userCards);
-
   // Return full card data for animation
   const cards = (await (await db.from('cards')).select('*', {
     id: `in.(${cardIds.join(',')})`,
   })) as any[];
 
+  await grantPackCardsToCollection(userId, cardIds, cards, db);
+
   return c.json({
     cards,
+    algorithmCards: algorithmRewards.rewards,
     rarities,
-    coinsSpent: typeof cost === 'number' ? cost : 0,
+    coinsSpent: costAmount,
+    duplicateCompensationCoins: algorithmRewards.duplicateCompensationCoins,
     usedExtendedPool: useExtendedPool,
   });
 });
+
+function pickAlgorithmDefinitionsForPack(packType: PackType): AlgorithmCardDefinition[] {
+  const count = Math.max(1, ALGORITHM_REWARDS_PER_PACK[packType] ?? 1);
+  const shuffled = [...ALGORITHM_CARD_CATALOG].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, Math.min(count, shuffled.length));
+}
+
+async function drawAlgorithmRewards(
+  userId: string,
+  packType: PackType,
+  db: any
+): Promise<{ rewards: AlgorithmPackReward[]; duplicateCompensationCoins: number }> {
+  const rewards: AlgorithmPackReward[] = [];
+  let duplicateCompensationCoins = 0;
+
+  const selectedDefinitions = pickAlgorithmDefinitionsForPack(packType);
+  if (selectedDefinitions.length === 0) {
+    return { rewards, duplicateCompensationCoins };
+  }
+
+  const existingAlgoRows = await (await db.from('algorithm_cards')).select('id,slug,name', {
+    user_id: `eq.${userId}`,
+  }) as Array<{ id: string; slug: string; name: string }>;
+
+  const existingBySlug = new Map(existingAlgoRows.map((row) => [row.slug, row]));
+
+  for (const definition of selectedDefinitions) {
+    const existing = existingBySlug.get(definition.slug);
+    if (existing) {
+      duplicateCompensationCoins += ALGORITHM_DUPLICATE_COMPENSATION_COINS;
+      rewards.push({
+        id: existing.id,
+        slug: definition.slug,
+        name: existing.name || definition.name,
+        description: definition.description,
+        abilityName: definition.abilityName,
+        abilityDescription: definition.abilityDescription,
+        mode: definition.mode,
+        themeTemplate: definition.themeTemplate,
+        themeTokens: definition.themeTokens,
+        isNew: false,
+      });
+      continue;
+    }
+
+    let algorithmCardId: string | undefined;
+    try {
+      const inserted = await (await db.from('algorithm_cards')).insert<Array<{ id: string }>>({
+        user_id: userId,
+        slug: definition.slug,
+        name: definition.name,
+        tier: 'learned',
+        solve_count: 0,
+      });
+      algorithmCardId = inserted[0]?.id;
+    } catch {
+      // If a concurrent request inserted this card first, fall back to fetch.
+      algorithmCardId = undefined;
+    }
+
+    if (!algorithmCardId) {
+      const rows = await (await db.from('algorithm_cards')).select<Array<{ id: string }>>('id', {
+        user_id: `eq.${userId}`,
+        slug: `eq.${definition.slug}`,
+      });
+      algorithmCardId = rows[0]?.id;
+    }
+
+    if (!algorithmCardId) {
+      continue;
+    }
+
+    existingBySlug.set(definition.slug, {
+      id: algorithmCardId,
+      slug: definition.slug,
+      name: definition.name,
+    });
+
+    rewards.push({
+      id: algorithmCardId,
+      slug: definition.slug,
+      name: definition.name,
+      description: definition.description,
+      abilityName: definition.abilityName,
+      abilityDescription: definition.abilityDescription,
+      mode: definition.mode,
+      themeTemplate: definition.themeTemplate,
+      themeTokens: definition.themeTokens,
+      isNew: true,
+    });
+  }
+
+  return { rewards, duplicateCompensationCoins };
+}
 
 async function pickCardForRarity(
   rarity: Rarity,
@@ -166,11 +296,15 @@ async function pickCardForRarity(
   if (!cards.length) return null;
 
   // Prefer cards the user doesn't own yet
-  const owned = (await (await db.from('user_cards')).select('card_id', {
+  const owned = (await (await db.from('user_cards')).select('card_id,tier', {
     user_id: `eq.${userId}`,
   })) as any[];
-  const ownedIds = new Set(owned.map((c: any) => c.card_id));
-  const unowned = cards.filter((c: any) => !ownedIds.has(c.id));
+  const ownedUnlockedIds = new Set(
+    owned
+      .filter((row: any) => row.tier !== 'locked')
+      .map((row: any) => row.card_id)
+  );
+  const unowned = cards.filter((c: any) => !ownedUnlockedIds.has(c.id));
 
   const pool = unowned.length > 0 ? unowned : cards;
   return pool[Math.floor(Math.random() * pool.length)] ?? null;
@@ -180,4 +314,76 @@ function getNextMidnight(): string {
   const d = new Date();
   d.setUTCHours(24, 0, 0, 0);
   return d.toISOString();
+}
+
+function getCoreTierByDuplicateCount(currentTier: CardTier, duplicateCount: number): CardTier {
+  if (currentTier === 'mastered') return 'mastered';
+  if (duplicateCount >= CORE_DUPLICATES_TO_MASTERED) return 'mastered';
+  if (duplicateCount >= CORE_DUPLICATES_TO_PROVEN) return 'proven';
+  return currentTier;
+}
+
+async function grantPackCardsToCollection(
+  userId: string,
+  cardIds: string[],
+  cards: Array<{ id: string; catalog_type?: string; is_seeded_core?: boolean }>,
+  db: any
+) {
+  if (cardIds.length === 0) return;
+
+  const existingRows = await (await db.from('user_cards')).select('id,card_id,tier,duplicate_count', {
+    user_id: `eq.${userId}`,
+    card_id: `in.(${cardIds.join(',')})`,
+  }) as Array<{
+    id: string;
+    card_id: string;
+    tier: CardTier;
+    duplicate_count?: number;
+  }>;
+
+  const existingByCardId = new Map(existingRows.map((row) => [row.card_id, row]));
+  const cardMetaById = new Map(cards.map((card) => [card.id, card]));
+
+  for (const cardId of cardIds) {
+    const existing = existingByCardId.get(cardId);
+    const cardMeta = cardMetaById.get(cardId);
+
+    if (!existing) {
+      await (await db.from('user_cards')).insert({
+        user_id: userId,
+        card_id: cardId,
+        tier: 'base',
+        duplicate_count: 0,
+        obtained_at: new Date().toISOString(),
+      });
+      continue;
+    }
+
+    if (existing.tier === 'locked') {
+      await (await db.from('user_cards')).update(
+        {
+          tier: 'base',
+          obtained_at: new Date().toISOString(),
+        },
+        { id: `eq.${existing.id}` }
+      );
+      continue;
+    }
+
+    const isSeededCore = cardMeta?.catalog_type === 'core' && Boolean(cardMeta?.is_seeded_core);
+    if (!isSeededCore) {
+      continue;
+    }
+
+    const nextDuplicateCount = Number(existing.duplicate_count ?? 0) + 1;
+    const nextTier = getCoreTierByDuplicateCount(existing.tier, nextDuplicateCount);
+
+    await (await db.from('user_cards')).update(
+      {
+        duplicate_count: nextDuplicateCount,
+        tier: nextTier,
+      },
+      { id: `eq.${existing.id}` }
+    );
+  }
 }
