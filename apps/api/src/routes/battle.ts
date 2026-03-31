@@ -233,7 +233,7 @@ battleRoutes.post('/finish', async (c) => {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function getDeckById(deckId: string, db: any) {
-  const decks = await (await db.from('decks')).select<any[]>('*', { id: `eq.${deckId}` });
+  const decks = await (await db.from('decks')).select('*', { id: `eq.${deckId}` }) as any[];
   return decks[0] ?? null;
 }
 
@@ -248,22 +248,27 @@ async function validateDeck(
   const uniqueCardIds = new Set(cardIds);
   if (uniqueCardIds.size !== 10) return 'Deck cannot contain duplicate cards';
 
-  const userCards = await (await db.from('user_cards')).select<any[]>(
-    'id,cards(element_type,catalog_type,is_seeded_core)',
+  const userCards = await (await db.from('user_cards')).select(
+    'id,tier,cards(element_type,catalog_type,is_seeded_core)',
     {
       user_id: `eq.${ownerId}`,
       id: `in.(${cardIds.join(',')})`,
     }
-  );
+  ) as Array<{ tier: string; cards: unknown }>;
 
   if (userCards.length !== 10) {
     return 'Deck contains invalid or unowned cards';
   }
 
+  const hasLockedCard = userCards.some((card: { tier: string }) => card.tier === 'locked');
+  if (hasLockedCard) {
+    return 'Deck contains locked cards. Unlock cards before using them in battle';
+  }
+
   const elementTypes = new Set(
     userCards
-      .map((card) => readElementType(card.cards))
-      .filter((element): element is string => Boolean(element))
+      .map((card: { cards: unknown }) => readElementType(card.cards))
+      .filter((element: string | null): element is string => Boolean(element))
   );
 
   if (elementTypes.size < 2) {
@@ -271,7 +276,7 @@ async function validateDeck(
   }
 
   if (enforceCoreOnly) {
-    const hasExtendedCard = userCards.some((card) => {
+    const hasExtendedCard = userCards.some((card: { cards: unknown }) => {
       const catalogType = readCatalogType(card.cards);
       const isSeededCore = readIsSeededCore(card.cards);
       return !(catalogType === 'core' && isSeededCore);
@@ -309,10 +314,10 @@ function readIsSeededCore(cardsField: unknown): boolean {
 }
 
 async function getUserCardStats(userCardId: string, db: any) {
-  const userCards = await (await db.from('user_cards')).select<any[]>(
+  const userCards = await (await db.from('user_cards')).select(
     'id,user_id,cards(base_atk,base_def,base_hp,element_type)',
     { id: `eq.${userCardId}` }
-  );
+  ) as any[];
   const userCard = userCards[0];
   if (!userCard) return null;
 
@@ -330,9 +335,9 @@ async function getUserCardStats(userCardId: string, db: any) {
 }
 
 async function getBattleById(battleId: string, db: any) {
-  const battles = await (await db.from('battles')).select<any[]>(
+  const battles = await (await db.from('battles')).select(
     'id,player1_id,player2_id,status',
     { id: `eq.${battleId}` }
-  );
+  ) as any[];
   return battles[0] ?? null;
 }
