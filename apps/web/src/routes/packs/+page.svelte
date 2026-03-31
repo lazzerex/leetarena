@@ -1,6 +1,12 @@
 <script lang="ts">
   import { env } from '$env/dynamic/public';
-  import { currentUser, packRevealCards, packRevealOpen, notify } from '$lib/stores';
+  import {
+    currentUser,
+    packRevealAlgorithmCards,
+    packRevealCards,
+    packRevealOpen,
+    notify,
+  } from '$lib/stores';
   import { api } from '$lib/api';
   import SunMedium from 'lucide-svelte/icons/sun-medium';
   import Library from 'lucide-svelte/icons/library';
@@ -112,13 +118,38 @@
           isNew: true,
         }))
       );
+      packRevealAlgorithmCards.set(
+        (result.algorithmCards ?? []).map((card) => ({
+          id: card.id,
+          slug: card.slug,
+          name: card.name,
+          description: card.description,
+          abilityName: card.abilityName,
+          abilityDescription: card.abilityDescription,
+          mode: card.mode,
+          themeTemplate: card.themeTemplate,
+          themeTokens: card.themeTokens,
+          isNew: card.isNew,
+        }))
+      );
       packRevealOpen.set(true);
 
       // Deduct coins from local store
-      currentUser.update((u) => u ? { ...u, coins: u.coins - result.coinsSpent } : u);
+      currentUser.update((u) => u ? {
+        ...u,
+        coins: u.coins - result.coinsSpent + (result.duplicateCompensationCoins ?? 0),
+      } : u);
 
       if (result.usedExtendedPool) {
         notify('info', 'Variety mode enabled: this pack may include extended catalog cards.');
+      }
+
+      if ((result.algorithmCards ?? []).length > 0) {
+        notify('success', `Algorithm reward: ${(result.algorithmCards ?? []).length} trap/effect card${(result.algorithmCards ?? []).length > 1 ? 's' : ''} obtained.`);
+      }
+
+      if ((result.duplicateCompensationCoins ?? 0) > 0) {
+        notify('info', `Duplicate algorithm compensation: +${result.duplicateCompensationCoins} coins`);
       }
     } catch (e: any) {
       notify('error', e.message ?? 'Failed to open pack');
