@@ -1,6 +1,7 @@
 import { writable, derived } from 'svelte/store';
 import type { User } from '@leetarena/types';
 import type { Rarity, Element } from '@leetarena/types';
+import type { AlgorithmThemeTokens } from '@leetarena/types';
 
 // ─── Auth Store ───────────────────────────────────────────────────────────────
 
@@ -41,7 +42,22 @@ export interface UserCardWithData {
 }
 
 export const userCollection = writable<UserCardWithData[]>([]);
-export const userAlgoCards = writable<unknown[]>([]);
+
+export interface UserAlgorithmTrapCard {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  abilityName: string;
+  abilityDescription: string;
+  mode: 'trap' | 'effect';
+  tags: string[];
+  themeTemplate: string;
+  themeTokens: AlgorithmThemeTokens;
+  obtainedAt: string;
+}
+
+export const userAlgoCards = writable<UserAlgorithmTrapCard[]>([]);
 
 // ─── Deck Builder Store ───────────────────────────────────────────────────────
 
@@ -50,6 +66,7 @@ export const deckName = writable('My Deck');
 
 export function addToDeck(card: UserCardWithData) {
   deckBuilderCards.update((cards) => {
+    if (card.tier === 'locked') return cards;
     if (cards.length >= 10) return cards;
     if (cards.find((c) => c.id === card.id)) return cards;
     return [...cards, card];
@@ -62,7 +79,11 @@ export function removeFromDeck(cardId: string) {
 
 export const deckIsValid = derived(deckBuilderCards, ($cards) => {
   if ($cards.length !== 10) return false;
-  const elements = new Set($cards.map((c) => c.card.elementType));
+  const elements = new Set(
+    $cards
+      .map((c) => c.card.elementType ?? c.card.element_type)
+      .filter((el): el is Element => Boolean(el))
+  );
   return elements.size >= 2;
 });
 
@@ -123,7 +144,21 @@ export interface PackRevealCard {
   isNew: boolean;
 }
 
+export interface PackRevealAlgorithmCard {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  abilityName: string;
+  abilityDescription: string;
+  mode: 'trap' | 'effect';
+  themeTemplate: string;
+  themeTokens: AlgorithmThemeTokens;
+  isNew: boolean;
+}
+
 export const packRevealCards = writable<PackRevealCard[]>([]);
+export const packRevealAlgorithmCards = writable<PackRevealAlgorithmCard[]>([]);
 export const packRevealOpen = writable(false);
 
 // ─── Notification Store ───────────────────────────────────────────────────────
