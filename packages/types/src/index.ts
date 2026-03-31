@@ -122,12 +122,155 @@ export interface AlgorithmCard {
   description: string;
   abilityName?: string;
   abilityDescription?: string;
+  mode?: 'trap' | 'effect';
   tags: string[];
+  themeTemplate?: string;
+  themeTokens?: AlgorithmThemeTokens;
 }
 
 export interface UserAlgorithmCard extends AlgorithmCard {
   tier: AlgoCardTier;
   solveCount: number;
+}
+
+export interface AlgorithmThemeTokens {
+  surface: string;
+  border: string;
+  accent: string;
+  chip: string;
+  text: string;
+  glow: string;
+}
+
+export interface AlgorithmCardDefinition {
+  slug: string;
+  name: string;
+  description: string;
+  abilityName: string;
+  abilityDescription: string;
+  mode: 'trap' | 'effect';
+  tags: string[];
+  themeTemplate: string;
+  themeTokens: AlgorithmThemeTokens;
+}
+
+export const ALGORITHM_CARD_CATALOG: readonly AlgorithmCardDefinition[] = [
+  {
+    slug: 'binary-search-snare',
+    name: 'Binary Search Snare',
+    description: 'Set a precision trap that punishes overconfident openers.',
+    abilityName: 'Midpoint Snap',
+    abilityDescription: 'When triggered, reduce enemy opening ATK by 15% this round.',
+    mode: 'trap',
+    tags: ['array', 'binary-search'],
+    themeTemplate: 'tide',
+    themeTokens: {
+      surface: '#0d1f2f',
+      border: '#3ba7e5',
+      accent: '#7dd3fc',
+      chip: '#11344c',
+      text: '#e0f2fe',
+      glow: 'rgba(56, 189, 248, 0.35)',
+    },
+  },
+  {
+    slug: 'union-find-barrier',
+    name: 'Union-Find Barrier',
+    description: 'A structural shield that absorbs impact before collapse.',
+    abilityName: 'Path Compression Wall',
+    abilityDescription: 'On use, grant your active card +20 DEF for the current reveal.',
+    mode: 'effect',
+    tags: ['graph', 'union-find'],
+    themeTemplate: 'forest',
+    themeTokens: {
+      surface: '#10261c',
+      border: '#38b26f',
+      accent: '#86efac',
+      chip: '#183629',
+      text: '#dcfce7',
+      glow: 'rgba(34, 197, 94, 0.35)',
+    },
+  },
+  {
+    slug: 'dp-overclock',
+    name: 'DP Overclock',
+    description: 'Bank previous states and convert them into immediate tempo.',
+    abilityName: 'Memo Burst',
+    abilityDescription: 'Increase your revealed card ATK by 12% for this round.',
+    mode: 'effect',
+    tags: ['dynamic-programming', 'memoization'],
+    themeTemplate: 'neon',
+    themeTokens: {
+      surface: '#1a1433',
+      border: '#8b5cf6',
+      accent: '#c4b5fd',
+      chip: '#2a1f4d',
+      text: '#ede9fe',
+      glow: 'rgba(139, 92, 246, 0.35)',
+    },
+  },
+  {
+    slug: 'greedy-fakeout',
+    name: 'Greedy Fakeout',
+    description: 'A bait line that lures the opponent into suboptimal sequencing.',
+    abilityName: 'Local Optimum',
+    abilityDescription: 'When triggered, enemy multiplier is clamped to 1.0 this reveal.',
+    mode: 'trap',
+    tags: ['greedy', 'array'],
+    themeTemplate: 'ember',
+    themeTokens: {
+      surface: '#2b170f',
+      border: '#f97316',
+      accent: '#fdba74',
+      chip: '#3a2015',
+      text: '#ffedd5',
+      glow: 'rgba(249, 115, 22, 0.35)',
+    },
+  },
+  {
+    slug: 'segment-tree-lock',
+    name: 'Segment Tree Lock',
+    description: 'Range control tool that stalls sudden momentum swings.',
+    abilityName: 'Range Freeze',
+    abilityDescription: 'Prevent opponent bonus effects from applying this round.',
+    mode: 'trap',
+    tags: ['tree', 'segment-tree'],
+    themeTemplate: 'stone',
+    themeTokens: {
+      surface: '#1d2430',
+      border: '#94a3b8',
+      accent: '#cbd5e1',
+      chip: '#2a3342',
+      text: '#e2e8f0',
+      glow: 'rgba(148, 163, 184, 0.35)',
+    },
+  },
+  {
+    slug: 'string-hash-jam',
+    name: 'String Hash Jam',
+    description: 'Corrupts readable patterns and muddles clear reads.',
+    abilityName: 'Collision Storm',
+    abilityDescription: 'Reduce opponent DEF by 18% for the active clash.',
+    mode: 'effect',
+    tags: ['string', 'hash-table'],
+    themeTemplate: 'rose',
+    themeTokens: {
+      surface: '#2c1220',
+      border: '#ec4899',
+      accent: '#f9a8d4',
+      chip: '#3d1b2d',
+      text: '#fce7f3',
+      glow: 'rgba(236, 72, 153, 0.35)',
+    },
+  },
+] as const;
+
+const ALGORITHM_CARD_INDEX = new Map(
+  ALGORITHM_CARD_CATALOG.map((definition) => [definition.slug, definition])
+);
+
+export function getAlgorithmCardDefinition(slug: string): AlgorithmCardDefinition | undefined {
+  return ALGORITHM_CARD_INDEX.get(slug);
 }
 
 // ─── Stat Calculation Helpers ─────────────────────────────────────────────────
