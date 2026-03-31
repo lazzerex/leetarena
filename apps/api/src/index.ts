@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { syncRoutes } from './routes/sync';
 import { packRoutes } from './routes/packs';
 import { battleRoutes } from './routes/battle';
@@ -61,13 +62,14 @@ app.onError((err, c) => {
       typeof (err as { status?: unknown }).status === 'number'
       ? (err as { status: number }).status
       : 500;
+  const responseStatus = (status >= 400 && status <= 599 ? status : 500) as ContentfulStatusCode;
 
   if (status >= 500) {
-    return c.json({ error: 'Internal server error' }, status);
+    return c.json({ error: 'Internal server error' }, responseStatus);
   }
 
   const message = err instanceof Error ? err.message : 'Request failed';
-  return c.json({ error: message }, status);
+  return c.json({ error: message }, responseStatus);
 });
 
 const DAILY_SYNC_CRON = '0 0 * * *';
