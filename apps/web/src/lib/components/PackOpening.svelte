@@ -3,7 +3,12 @@
   import { flip } from 'svelte/animate';
   import { buildLeetCodeProblemUrl } from '$lib/leetcode';
   import Card from './Card.svelte';
-  import { packRevealCards, packRevealOpen } from '$lib/stores';
+  import AlgorithmCard from './AlgorithmCard.svelte';
+  import {
+    packRevealAlgorithmCards,
+    packRevealCards,
+    packRevealOpen,
+  } from '$lib/stores';
   import Swords from 'lucide-svelte/icons/swords';
   import Check from 'lucide-svelte/icons/check';
 
@@ -11,9 +16,14 @@
   let allRevealed = false;
 
   $: cards = $packRevealCards;
+  $: algorithmCards = $packRevealAlgorithmCards;
+  $: revealItems = [
+    ...cards.map((card) => ({ type: 'problem' as const, id: card.id, isNew: card.isNew, card })),
+    ...algorithmCards.map((card) => ({ type: 'algorithm' as const, id: card.id, isNew: card.isNew, card })),
+  ];
 
   function revealNext() {
-    if (revealIndex < cards.length - 1) {
+    if (revealIndex < revealItems.length - 1) {
       revealIndex++;
     } else {
       allRevealed = true;
@@ -21,18 +31,19 @@
   }
 
   function revealAll() {
-    revealIndex = cards.length - 1;
+    revealIndex = revealItems.length - 1;
     allRevealed = true;
   }
 
   function close() {
     packRevealOpen.set(false);
     packRevealCards.set([]);
+    packRevealAlgorithmCards.set([]);
     revealIndex = -1;
     allRevealed = false;
   }
 
-  $: newCards = cards.filter((c) => c.isNew);
+  $: newCards = revealItems.filter((item) => item.isNew);
 </script>
 
 {#if $packRevealOpen}
@@ -42,41 +53,61 @@
   >
     <h2 class="text-3xl font-bold text-white mb-2 tracking-widest uppercase">Pack Opened!</h2>
     {#if newCards.length > 0}
-      <p class="text-amber-400 text-sm mb-6">{newCards.length} new card{newCards.length !== 1 ? 's' : ''}!</p>
+      <p class="text-amber-400 text-sm mb-6">{newCards.length} new reward{newCards.length !== 1 ? 's' : ''}!</p>
     {:else}
       <p class="text-gray-400 text-sm mb-6">Tap cards to reveal</p>
     {/if}
 
     <!-- Cards grid -->
     <div class="flex flex-wrap gap-3 justify-center mb-8 max-w-2xl">
-      {#each cards as card, i (card.id)}
+      {#each revealItems as item, i (`${item.type}-${item.id}`)}
         <div animate:flip={{ duration: 300 }}>
           {#if i <= revealIndex}
             <div in:scale={{ duration: 400, delay: 50 }} class="relative text-center">
-              <Card
-                title={card.title}
-                titleSlug={card.titleSlug}
-                rarity={card.rarity}
-                elementType={card.elementType}
-                baseAtk={card.baseAtk}
-                baseDef={card.baseDef}
-                baseHp={card.baseHp}
-                tier="base"
-                compact={true}
-              />
-              {#if card.isNew}
+              {#if item.type === 'problem'}
+                <Card
+                  title={item.card.title}
+                  titleSlug={item.card.titleSlug}
+                  rarity={item.card.rarity}
+                  elementType={item.card.elementType}
+                  baseAtk={item.card.baseAtk}
+                  baseDef={item.card.baseDef}
+                  baseHp={item.card.baseHp}
+                  tier="base"
+                  compact={true}
+                />
+              {:else}
+                <AlgorithmCard
+                  name={item.card.name}
+                  slug={item.card.slug}
+                  description={item.card.description}
+                  abilityName={item.card.abilityName}
+                  abilityDescription={item.card.abilityDescription}
+                  mode={item.card.mode}
+                  themeTemplate={item.card.themeTemplate}
+                  themeTokens={item.card.themeTokens}
+                  compact={true}
+                />
+              {/if}
+
+              {#if item.card.isNew}
                 <div class="absolute -top-2 -right-2 bg-green-500 text-white text-xs px-1.5 py-0.5 rounded-full font-bold z-10">
                   NEW
                 </div>
               {/if}
-              <a
-                href={buildLeetCodeProblemUrl(card.titleSlug)}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="mt-2 inline-block text-xs text-amber-300 hover:text-amber-200 underline"
-              >
-                View on LeetCode
-              </a>
+
+              {#if item.type === 'problem'}
+                <a
+                  href={buildLeetCodeProblemUrl(item.card.titleSlug)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="mt-2 inline-block text-xs text-amber-300 hover:text-amber-200 underline"
+                >
+                  View on LeetCode
+                </a>
+              {:else}
+                <p class="mt-2 text-[11px] text-sky-200/80 uppercase tracking-wide">Trap / Effect Ready</p>
+              {/if}
             </div>
           {:else}
             <!-- Hidden card back -->
