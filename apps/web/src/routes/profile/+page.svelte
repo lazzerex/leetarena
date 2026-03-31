@@ -16,7 +16,18 @@
   let leetcodeUsername = '';
   let verifying = false;
   let syncing = false;
+  let targetedSyncing = false;
   let lastSynced: string | null = null;
+  let targetedTitleSlug = '';
+  let targetedResult: {
+    status: 'unlocked' | 'upgraded' | 'already_unlocked' | 'out_of_catalog' | 'no_metadata' | 'not_found';
+    titleSlug: string;
+    unlocked: number;
+    upgraded: number;
+    promotedExtendedCards: number;
+    gemsAwarded: number;
+    message?: string;
+  } | null = null;
   let syncResult: {
     synced: number;
     unlocked: number;
@@ -125,6 +136,31 @@
     }
   }
 
+  async function triggerTargetedSync() {
+    if (!$currentUser || !targetedTitleSlug.trim()) return;
+    targetedSyncing = true;
+    targetedResult = null;
+    try {
+      targetedResult = await api.targetedSync($currentUser.id, targetedTitleSlug.trim());
+
+      if (targetedResult.status === 'unlocked') {
+        notify('success', `Unlocked ${targetedResult.titleSlug}`);
+      } else if (targetedResult.status === 'upgraded') {
+        notify('success', `Progress updated for ${targetedResult.titleSlug}`);
+      } else if (targetedResult.status === 'already_unlocked') {
+        notify('info', `${targetedResult.titleSlug} is already unlocked`);
+      } else if (targetedResult.status === 'not_found') {
+        notify('info', targetedResult.message ?? 'No accepted submission found for this problem yet');
+      } else {
+        notify('info', `No unlock applied for ${targetedResult.titleSlug}`);
+      }
+    } catch (e: any) {
+      notify('error', e.message ?? 'Targeted sync failed');
+    } finally {
+      targetedSyncing = false;
+    }
+  }
+
   function formatDate(iso: string | null) {
     if (!iso) return 'Never';
     return new Date(iso).toLocaleString();
@@ -219,6 +255,45 @@
         Sync is optional and only runs for users who connect and verify their LeetCode username.
         Solving non-core problems only unlocks extended catalog cards when the server enables variety mode.
       </p>
+
+      <div class="mt-5 border-t border-gray-800 pt-4">
+        <p class="text-sm font-semibold mb-2">Targeted Sync (Single Problem)</p>
+        <p class="text-xs text-gray-500 mb-3">
+          Enter a LeetCode title slug to verify and sync one specific problem result.
+        </p>
+
+        <div class="flex gap-2">
+          <input
+            bind:value={targetedTitleSlug}
+            placeholder="e.g. two-sum"
+            class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-500 text-white placeholder-gray-500"
+          />
+          <button
+            on:click={triggerTargetedSync}
+            disabled={targetedSyncing || !targetedTitleSlug.trim() || !connectedLeetCodeUsername}
+            class="px-4 py-2 bg-sky-700 hover:bg-sky-600 text-white font-bold rounded-lg text-sm transition-colors disabled:opacity-40"
+          >
+            {targetedSyncing ? 'Checking...' : 'Run'}
+          </button>
+        </div>
+
+        {#if targetedResult}
+          <div class="mt-3 text-xs text-gray-300 bg-gray-800/50 rounded-lg px-3 py-2">
+            <p>Status: <span class="font-semibold">{targetedResult.status}</span></p>
+            <p>Slug: {targetedResult.titleSlug}</p>
+            <p>Unlocked: {targetedResult.unlocked} · Upgraded: {targetedResult.upgraded}</p>
+            {#if targetedResult.promotedExtendedCards > 0}
+              <p>Extended promotions: {targetedResult.promotedExtendedCards}</p>
+            {/if}
+            {#if targetedResult.gemsAwarded > 0}
+              <p>Extended gems awarded: +{targetedResult.gemsAwarded}</p>
+            {/if}
+            {#if targetedResult.message}
+              <p>{targetedResult.message}</p>
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
 
     <!-- Daily quests (static UI for MVP) -->
