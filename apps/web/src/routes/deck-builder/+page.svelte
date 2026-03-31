@@ -12,6 +12,7 @@
   let saving = false;
   let search = '';
   let filterElement = 'all';
+  let loadedForUserId: string | null = null;
 
   const elements = ['all', 'Array', 'Graph', 'Tree', 'Math', 'DynamicProgramming', 'String'];
 
@@ -20,24 +21,40 @@
     return Array.isArray(raw) ? (raw[0] ?? {}) : raw;
   }
 
-  onMount(async () => {
-    if ($currentUser) {
-      try {
-        const collection = await api.getCollection($currentUser.id);
-        userCollection.set(collection as any[]);
-      } catch {}
+  async function loadDeckBuilderData(userId: string) {
+    loading = true;
+    try {
+      const collection = await api.getCollection(userId);
+      userCollection.set(collection as any[]);
+    } catch (e: any) {
+      userCollection.set([]);
+      notify('error', e?.message ?? 'Failed to load collection for deck builder');
+    } finally {
+      loading = false;
     }
-    loading = false;
+  }
+
+  onMount(() => {
+    loading = true;
   });
+
+  $: if ($currentUser?.id && loadedForUserId !== $currentUser.id) {
+    loadedForUserId = $currentUser.id;
+    deckBuilderCards.set([]);
+    void loadDeckBuilderData($currentUser.id);
+  }
 
   $: available = $userCollection.filter((uc: any) => {
     const card = pickCard(uc);
+    if (uc.tier === 'locked') return false;
     const inDeck = $deckBuilderCards.find((d) => d.id === uc.id);
     if (inDeck) return false;
     if (search && !card.title?.toLowerCase().includes(search.toLowerCase())) return false;
     if (filterElement !== 'all' && (card.element_type ?? card.elementType) !== filterElement) return false;
     return true;
   });
+
+  $: deckSlots = Array.from({ length: 10 }, (_unused, index) => $deckBuilderCards[index] ?? null);
 
   $: deckElements = new Set($deckBuilderCards.map((c) => c.card?.element_type ?? c.card?.elementType));
 
@@ -68,6 +85,10 @@
   }
 
   function addCardToDeck(uc: any) {
+    if (uc?.tier === 'locked') {
+      notify('error', 'Locked cards cannot be added to deck');
+      return;
+    }
     addToDeck(uc);
   }
 </script>
@@ -161,45 +182,38 @@
           </div>
         {/if}
 
-        <!-- Cards in deck -->
-        <div class="space-y-1.5 mb-4 max-h-72 overflow-y-auto">
-          {#each $deckBuilderCards as uc, i (uc.id)}
-            {@const card = pickCard(uc)}
-            <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2">
-              <span class="text-gray-500 text-xs w-4">{i + 1}</span>
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-medium truncate">{card.title}</p>
-                <p class="text-xs text-gray-500">{card.element_type ?? card.elementType} · {card.rarity}</p>
+        <!-- Stable 10 deck slots -->
+        <div class="space-y-1.5 mb-4 max-h-80 overflow-y-auto">
+          {#each deckSlots as uc, i}
+            {#if uc}
+              {@const card = pickCard(uc)}
+              <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2">
+                <span class="text-gray-500 text-xs w-4">{i + 1}</span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium truncate">{card.title}</p>
+                  <p class="text-xs text-gray-500">{card.element_type ?? card.elementType} · {card.rarity}</p>
+                </div>
+                <a
+                  href={buildLeetCodeProblemUrl(card.title_slug ?? card.titleSlug)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-xs text-amber-300 hover:text-amber-200 underline"
+                >
+                  View
+                </a>
+                <button
+                  on:click={() => removeFromDeck(uc.id)}
+                  class="text-gray-600 hover:text-red-400 text-lg leading-none transition-colors"
+                >×</button>
               </div>
-              <a
-                href={buildLeetCodeProblemUrl(card.title_slug ?? card.titleSlug)}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="text-xs text-amber-300 hover:text-amber-200 underline"
-              >
-                View
-              </a>
-              <button
-                on:click={() => removeFromDeck(uc.id)}
-                class="text-gray-600 hover:text-red-400 text-lg leading-none transition-colors"
-              >×</button>
-            </div>
-          {:else}
-            <p class="text-center text-gray-600 text-sm py-4">Click cards to add them</p>
-          {/each}
-        </div>
-
-        <!-- Empty slots -->
-        {#if $deckBuilderCards.length < 10}
-          <div class="space-y-1.5 mb-4">
-            {#each Array(10 - $deckBuilderCards.length) as _, i}
+            {:else}
               <div class="flex items-center gap-2 bg-gray-800/40 border border-dashed border-gray-700 rounded-lg px-3 py-2">
-                <span class="text-gray-600 text-xs w-4">{$deckBuilderCards.length + i + 1}</span>
+                <span class="text-gray-600 text-xs w-4">{i + 1}</span>
                 <span class="text-gray-700 text-sm">Empty slot</span>
               </div>
-            {/each}
-          </div>
-        {/if}
+            {/if}
+          {/each}
+        </div>
 
         <!-- Actions -->
         <div class="flex gap-2">
