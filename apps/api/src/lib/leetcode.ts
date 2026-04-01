@@ -22,6 +22,13 @@ export interface QuestionData {
   topicTags: Array<{ slug: string; name: string }>;
 }
 
+export interface QuestionSummary {
+  title: string;
+  titleSlug: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  summary: string;
+}
+
 const GRAPHQL_URL = 'https://leetcode.com/graphql';
 
 async function gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
@@ -112,4 +119,98 @@ export async function getQuestionData(titleSlug: string): Promise<QuestionData |
   } catch {
     return null;
   }
+}
+
+export async function getQuestionSummary(titleSlug: string): Promise<QuestionSummary | null> {
+  try {
+    const data = await gql<{ question: {
+      title: string;
+      titleSlug: string;
+      difficulty: 'Easy' | 'Medium' | 'Hard';
+      content: string | null;
+    } | null }>(
+      `query questionSummary($titleSlug: String!) {
+        question(titleSlug: $titleSlug) {
+          title
+          titleSlug
+          difficulty
+          content
+        }
+      }`,
+      { titleSlug }
+    );
+
+    const question = data.question;
+    if (!question) return null;
+
+    const summary = extractSummaryFromHtml(question.content);
+    if (!summary) return null;
+
+    return {
+      title: question.title,
+      titleSlug: question.titleSlug,
+      difficulty: question.difficulty,
+      summary,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function extractSummaryFromHtml(html: string | null): string | null {
+  if (!html || typeof html !== 'string') return null;
+
+  const withoutCodeBlocks = html
+    .replace(/<pre[\s\S]*?<\/pre>/gi, ' ')
+    .replace(/<code[\s\S]*?<\/code>/gi, ' ');
+
+  const text = decodeHtmlEntities(
+    withoutCodeBlocks
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
+
+  if (!text) return null;
+
+  const maxLen = 320;
+  const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+  let summary = '';
+  let sentenceCount = 0;
+
+  for (const sentence of sentences) {
+    const next = (summary ? `${summary} ${sentence}` : sentence).trim();
+    if (next.length > maxLen) break;
+    summary = next;
+    sentenceCount += 1;
+    if (sentenceCount >= 2) break;
+  }
+
+  if (!summary) {
+    summary = text.slice(0, maxLen).trim();
+  }
+
+  if (summary.length < text.length && !/[.!?]$/.test(summary)) {
+    summary = `${summary}...`;
+  }
+
+  return summary;
+}
+
+function decodeHtmlEntities(input: string): string {
+  return input
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : '';
+    })
+    .replace(/&#(\d+);/g, (_match, dec) => {
+      const codePoint = Number.parseInt(dec, 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : '';
+    });
 }
