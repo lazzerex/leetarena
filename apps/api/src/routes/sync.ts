@@ -42,12 +42,12 @@ type SubmissionOutcome =
   | 'skipped_out_of_catalog'
   | 'skipped_no_metadata';
 
-const CORE_SYNC_TARGET_TIER: CardTier = 'base';
-const BATCH_SYNC_LIMIT = 20;
-const BATCH_SYNC_COOLDOWN_MS = 60 * 60 * 1000;
-const TARGETED_CARD_COOLDOWN_MS = 5 * 60 * 1000;
+const CORE_DUPLICATES_TO_MASTERED = 20;
+const BATCH_SYNC_LIMIT = 50;
+const BATCH_SYNC_COOLDOWN_MS = 0;
+const TARGETED_CARD_COOLDOWN_MS = 0;
 const TARGETED_WINDOW_MS = 60 * 60 * 1000;
-const TARGETED_MAX_PER_WINDOW = 10;
+const TARGETED_MAX_PER_WINDOW = Number.MAX_SAFE_INTEGER;
 const EXTENDED_GEMS_PER_PROMOTION = 1;
 
 const TargetedSyncSchema = z.object({
@@ -417,8 +417,12 @@ async function applySubmission(args: {
     return { outcome: 'skipped_no_metadata', promotedExtendedCards: 0 };
   }
 
-  const userCards = await (await db.from('user_cards')).select<Array<{ id: string; tier: CardTier }>>(
-    'id,tier',
+  const userCards = await (await db.from('user_cards')).select<Array<{
+    id: string;
+    tier: CardTier;
+    duplicate_count?: number;
+  }>>(
+    'id,tier,duplicate_count',
     {
       user_id: `eq.${userId}`,
       card_id: `eq.${cardId}`,
@@ -429,21 +433,36 @@ async function applySubmission(args: {
   let outcome: SubmissionOutcome = 'no_change';
 
   if (catalogType === 'core') {
+    const duplicateCount = Number(existingUserCard?.duplicate_count ?? 0);
     if (!existingUserCard) {
       await (await db.from('user_cards')).insert({
         user_id: userId,
         card_id: cardId,
-        tier: CORE_SYNC_TARGET_TIER,
+        tier: getCoreTierFromSolveAndDuplicateCount(duplicateCount),
         duplicate_count: 0,
         obtained_at: new Date().toISOString(),
       });
       outcome = 'unlocked';
     } else if (existingUserCard.tier === 'locked') {
+      const unlockTier = getCoreTierFromSolveAndDuplicateCount(duplicateCount);
       await (await db.from('user_cards')).update(
-        { tier: CORE_SYNC_TARGET_TIER },
+        { tier: unlockTier },
         { id: `eq.${existingUserCard.id}` }
       );
       outcome = 'unlocked';
+    } else if (existingUserCard.tier === 'base') {
+      const upgradedTier = getCoreTierFromSolveAndDuplicateCount(duplicateCount);
+      await (await db.from('user_cards')).update(
+        { tier: upgradedTier },
+        { id: `eq.${existingUserCard.id}` }
+      );
+      outcome = 'upgraded';
+    } else if (existingUserCard.tier === 'proven' && duplicateCount >= CORE_DUPLICATES_TO_MASTERED) {
+      await (await db.from('user_cards')).update(
+        { tier: 'mastered' },
+        { id: `eq.${existingUserCard.id}` }
+      );
+      outcome = 'upgraded';
     }
 
     return { outcome, promotedExtendedCards: 0 };
@@ -470,6 +489,11 @@ async function applySubmission(args: {
     outcome,
     promotedExtendedCards: promotedIds.length,
   };
+}
+
+function getCoreTierFromSolveAndDuplicateCount(duplicateCount: number): CardTier {
+  if (duplicateCount >= CORE_DUPLICATES_TO_MASTERED) return 'mastered';
+  return 'proven';
 }
 
 async function applyExtendedProgressForSubmission(
