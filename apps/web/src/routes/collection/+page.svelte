@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentUser, userAlgoCards, userCollection, notify } from '$lib/stores';
+  import { goto } from '$app/navigation';
+  import { authHydrated, currentUser, userAlgoCards, userCollection, notify } from '$lib/stores';
   import { api } from '$lib/api';
   import { buildLeetCodeProblemUrl } from '$lib/leetcode';
   import AlgorithmCard from '$lib/components/AlgorithmCard.svelte';
@@ -13,18 +14,33 @@
   let filterRarity = 'all';
   let filterElement = 'all';
   let filterTier = 'owned';
+  let filtered: any[] = [];
   let catalogView: 'core' | 'extended' | 'all' = 'core';
   let selectedCard: any = null;
+  let selectedAlgoCard: any = null;
   let equipping = false;
   let targetedSyncing = false;
   let targetedSyncingSlug: string | null = null;
   let syncGuideOpen = false;
   let syncFeedback: { type: 'error' | 'info' | 'success'; message: string } | null = null;
   let loadedForUserId: string | null = null;
+  let problemSummaryLoading = false;
+  let problemSummaryText: string | null = null;
+  let problemSummarySource: 'leetcode' | 'fallback' | 'unavailable' = 'fallback';
+  let problemSummaryLoadedSlug: string | null = null;
+  let problemSummaryRequestId = 0;
+  let redirectingToLogin = false;
+  const problemSummaryCache = new Map<string, { summary: string | null; source: 'leetcode' | 'unavailable' }>();
 
   const rarities = ['all', 'common', 'rare', 'epic', 'legendary'];
   const elements = ['all', 'Array', 'Graph', 'Tree', 'Math', 'DynamicProgramming', 'String'];
   const tiers = ['owned', 'all', 'locked', 'base', 'proven', 'mastered'];
+  const PROBLEM_TIER_ORDER = ['locked', 'base', 'proven', 'mastered'] as const;
+  const CORE_DUPLICATES_TO_MASTERED = 20;
+  const EXTENDED_MATCHED_SOLVES_TO_PROVEN = 3;
+  const EXTENDED_GEMS_TO_MASTERED = 5;
+
+  type ProblemTier = typeof PROBLEM_TIER_ORDER[number];
 
   function pickCard(uc: any) {
     const raw = uc?.card ?? uc?.cards ?? uc;
@@ -33,7 +49,9 @@
 
   function isBattleCoreCard(uc: any): boolean {
     const card = pickCard(uc);
-    return card?.catalog_type === 'core' && Boolean(card?.is_seeded_core);
+    const catalogType = card?.catalog_type ?? card?.catalogType;
+    const isSeededCore = Boolean(card?.is_seeded_core ?? card?.isSeededCore);
+    return catalogType === 'core' && isSeededCore;
   }
 
   function isExtendedCard(uc: any): boolean {
@@ -50,11 +68,252 @@
     return catalogType === 'core' && isSeededCore;
   }
 
-  function matchesTierFilter(userCardTier: string | undefined): boolean {
+  function getElementLabel(element: string | undefined): string {
+    if (!element) return 'Algorithm';
+    if (element === 'DynamicProgramming') return 'Dynamic Programming';
+    return element;
+  }
+
+  function shortenAlgoAbilityName(value: string, maxLength: number): string {
+    let normalized = value.trim().replace(/\s+/g, ' ');
+    if (!normalized) return 'Battle Protocol';
+    if (normalized.length <= maxLength) return normalized;
+
+    const replacements: Array<[RegExp, string]> = [
+      [/\bcompression\b/gi, 'compress'],
+      [/\bprotocol\b/gi, 'proto'],
+      [/\boptimization\b/gi, 'opt'],
+      [/\bability\b/gi, 'abil.'],
+      [/\balgorithm\b/gi, 'algo'],
+      [/\bwithout\b/gi, 'w/o'],
+    ];
+
+    for (const [pattern, replacement] of replacements) {
+      normalized = normalized.replace(pattern, replacement).replace(/\s+/g, ' ').trim();
+      if (normalized.length <= maxLength) return normalized;
+    }
+
+    return `${normalized.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+  }
+
+  function normalizeProblemTier(value: unknown): ProblemTier {
+    return PROBLEM_TIER_ORDER.includes(value as ProblemTier)
+      ? (value as ProblemTier)
+      : 'base';
+  }
+
+  function getProblemTierIndex(tier: ProblemTier): number {
+    return PROBLEM_TIER_ORDER.indexOf(tier);
+  }
+
+  function formatProblemTier(tier: ProblemTier): string {
+    if (tier === 'locked') return 'Locked';
+    if (tier === 'base') return 'Base';
+    if (tier === 'proven') return 'Proven';
+    return 'Mastered';
+  }
+
+  function getCardCatalogType(card: any): 'core' | 'extended' {
+    const catalogType = card?.catalog_type ?? card?.catalogType;
+    return catalogType === 'extended' ? 'extended' : 'core';
+  }
+
+  function normalizeElementKey(value: unknown): string {
+    return String(value ?? '')
+      .trim()
+      .replace(/\s+/g, '')
+      .toLowerCase();
+  }
+
+  function getCardElement(card: any): string {
+    return String(card?.element_type ?? card?.elementType ?? '').trim();
+  }
+
+  function getCardRarity(card: any): string {
+    return String(card?.rarity ?? '').trim().toLowerCase();
+  }
+
+  function getDuplicateCount(uc: any): number {
+    const raw = Number(uc?.duplicate_count ?? 0);
+    if (!Number.isFinite(raw) || raw < 0) return 0;
+    return Math.floor(raw);
+  }
+
+  function getExtendedProgressCount(uc: any): number {
+    const slugs = uc?.extended_progress_slugs;
+    if (!Array.isArray(slugs)) return 0;
+    return slugs.filter((entry: unknown) => typeof entry === 'string' && entry.trim().length > 0).length;
+  }
+
+  function clamp01(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    if (value <= 0) return 0;
+    if (value >= 1) return 1;
+    return value;
+  }
+
+  function getTierProgressPercent(uc: any, card: any): number {
+    const tier = normalizeProblemTier(uc?.tier);
+    const catalogType = getCardCatalogType(card);
+
+    if (tier === 'mastered') return 100;
+    if (tier === 'locked') return 4;
+
+    if (catalogType === 'core') {
+      const duplicates = getDuplicateCount(uc);
+
+      if (tier === 'base') {
+        return (1 / 3) * 100;
+      }
+
+      const stage = clamp01(
+        duplicates / CORE_DUPLICATES_TO_MASTERED
+      );
+      return ((2 + stage) / 3) * 100;
+    }
+
+    if (tier === 'base') {
+      const progress = getExtendedProgressCount(uc);
+      const stage = clamp01(progress / EXTENDED_MATCHED_SOLVES_TO_PROVEN);
+      return ((1 + stage) / 3) * 100;
+    }
+
+    return (2 / 3) * 100;
+  }
+
+  function getTierConditionSummary(uc: any, card: any): { current: string; next: string | null } {
+    const tier = normalizeProblemTier(uc?.tier);
+    const catalogType = getCardCatalogType(card);
+
+    if (catalogType === 'core') {
+      const duplicates = getDuplicateCount(uc);
+
+      if (tier === 'locked') {
+        return {
+          current: 'Locked tier: not battle-ready yet.',
+          next: 'Ownership condition: open this card from packs, or sync an accepted solve for this exact problem.',
+        };
+      }
+
+      if (tier === 'base') {
+        return {
+          current: 'Base tier: standard battle stats are active.',
+          next: `Level up condition: solve this exact problem on LeetCode and run Sync to reach Proven. Duplicate progress toward Mastered is tracked (${duplicates}/${CORE_DUPLICATES_TO_MASTERED}).`,
+        };
+      }
+
+      if (tier === 'proven') {
+        return {
+          current: 'Proven tier: improved battle stats are active.',
+          next: `Level up condition: collect ${CORE_DUPLICATES_TO_MASTERED} total duplicates to reach Mastered (${duplicates}/${CORE_DUPLICATES_TO_MASTERED}).`,
+        };
+      }
+
+      return {
+        current: 'Mastered tier: maximum battle stats unlocked.',
+        next: null,
+      };
+    }
+
+    const progress = getExtendedProgressCount(uc);
+
+    if (tier === 'locked') {
+      return {
+        current: 'Locked tier: not battle-ready yet.',
+        next: 'Level up condition: sync an accepted solve for this specific problem to unlock Base tier.',
+      };
+    }
+
+    if (tier === 'base') {
+      return {
+        current: 'Base tier: extended progression tracks unique tag-matching solves.',
+        next: `Level up condition: solve ${EXTENDED_MATCHED_SOLVES_TO_PROVEN} unique tag-matching problems to reach Proven (${progress}/${EXTENDED_MATCHED_SOLVES_TO_PROVEN}).`,
+      };
+    }
+
+    if (tier === 'proven') {
+      return {
+        current: 'Proven tier: improved battle stats are active.',
+        next: `Level up condition: spend ${EXTENDED_GEMS_TO_MASTERED} Extended Gems to upgrade to Mastered tier.`,
+      };
+    }
+
+    return {
+      current: 'Mastered tier: maximum battle stats unlocked.',
+      next: null,
+    };
+  }
+
+  function buildFallbackCardSummary(card: any, tier: string): string {
+    const difficulty = card?.difficulty ?? 'Unknown';
+    const element = getElementLabel(card?.element_type ?? card?.elementType);
+    const tags = Array.isArray(card?.tags) ? card.tags.filter(Boolean) : [];
+    const tagsSnippet = tags.length > 0 ? ` Focused on ${tags.slice(0, 2).join(' and ')}.` : '';
+
+    if (tier === 'locked') {
+      return `${difficulty} ${element} card.${tagsSnippet} Obtain it from packs (or sync an accepted solve) to unlock it for deck use.`;
+    }
+
+    if (tier === 'mastered') {
+      return `${difficulty} ${element} card in mastered form.${tagsSnippet} This one is fully battle-ready for your deck.`;
+    }
+
+    return `${difficulty} ${element} card.${tagsSnippet} Keep solving and collecting duplicates to push it to higher tiers.`;
+  }
+
+  async function loadCardProblemSummary(card: any) {
+    const titleSlug = getCardTitleSlug(card);
+    problemSummaryLoadedSlug = titleSlug || null;
+    problemSummaryText = null;
+    problemSummarySource = 'fallback';
+
+    if (!titleSlug) {
+      problemSummaryLoading = false;
+      return;
+    }
+
+    const cached = problemSummaryCache.get(titleSlug);
+    if (cached) {
+      problemSummaryText = cached.summary;
+      problemSummarySource = cached.source;
+      problemSummaryLoading = false;
+      return;
+    }
+
+    const requestId = ++problemSummaryRequestId;
+    problemSummaryLoading = true;
+
+    try {
+      const response = await api.getProblemSummary(titleSlug);
+      if (requestId !== problemSummaryRequestId) return;
+
+      const summary = typeof response.summary === 'string' && response.summary.trim().length > 0
+        ? response.summary.trim()
+        : null;
+
+      problemSummaryCache.set(titleSlug, {
+        summary,
+        source: response.source,
+      });
+
+      problemSummaryText = summary;
+      problemSummarySource = response.source;
+    } catch {
+      if (requestId !== problemSummaryRequestId) return;
+      problemSummaryText = null;
+      problemSummarySource = 'unavailable';
+    } finally {
+      if (requestId === problemSummaryRequestId) {
+        problemSummaryLoading = false;
+      }
+    }
+  }
+
+  function matchesTierFilter(userCardTier: string | undefined, activeFilterTier: string): boolean {
     const tier = userCardTier ?? 'base';
-    if (filterTier === 'all') return true;
-    if (filterTier === 'owned') return tier !== 'locked';
-    return tier === filterTier;
+    if (activeFilterTier === 'all') return true;
+    if (activeFilterTier === 'owned') return tier !== 'locked';
+    return tier === activeFilterTier;
   }
 
   function setModalSyncFeedback(
@@ -71,12 +330,26 @@
     selectedCard = uc;
     syncGuideOpen = false;
     syncFeedback = null;
+    void loadCardProblemSummary(pickCard(uc));
   }
 
   function closeCardModal() {
     selectedCard = null;
     syncGuideOpen = false;
     syncFeedback = null;
+    problemSummaryRequestId += 1;
+    problemSummaryLoading = false;
+    problemSummaryText = null;
+    problemSummarySource = 'fallback';
+    problemSummaryLoadedSlug = null;
+  }
+
+  function openAlgoCardModal(algo: any) {
+    selectedAlgoCard = algo;
+  }
+
+  function closeAlgoCardModal() {
+    selectedAlgoCard = null;
   }
 
   async function loadCollectionData(userId: string) {
@@ -110,6 +383,14 @@
     void loadCollectionData($currentUser.id);
   }
 
+  $: if ($authHydrated && !$currentUser?.id && !redirectingToLogin) {
+    redirectingToLogin = true;
+    loading = false;
+    userCollection.set([]);
+    userAlgoCards.set([]);
+    goto('/login');
+  }
+
   $: algoNameById = new Map($userAlgoCards.map((algo) => [algo.id, algo.name]));
 
   function getEquippedAlgoName(algoId: string | undefined | null): string {
@@ -123,26 +404,47 @@
     if (!card?.id) return;
 
     const field = slot === 1 ? 'equipped_algo_1' : 'equipped_algo_2';
+    const otherField = slot === 1 ? 'equipped_algo_2' : 'equipped_algo_1';
+    const selectedCardRowId = selectedCard.id;
     const currentAlgoId = selectedCard?.[field] ?? null;
     const nextAlgoId: string | null = currentAlgoId === algoId ? null : algoId;
 
     equipping = true;
     try {
-      await api.equipAlgo($currentUser.id, card.id, nextAlgoId, slot);
+      const result = await api.equipAlgo($currentUser.id, card.id, nextAlgoId, slot);
 
-      selectedCard = {
+      const nextSelectedCard = {
         ...selectedCard,
         [field]: nextAlgoId,
       };
+      if (nextAlgoId && nextSelectedCard[otherField] === nextAlgoId) {
+        nextSelectedCard[otherField] = null;
+      }
+      selectedCard = nextSelectedCard;
 
       userCollection.update((rows) => rows.map((row: any) =>
-        row.id === selectedCard.id
-          ? { ...row, [field]: nextAlgoId }
-          : row
+        row.id === selectedCardRowId
+          ? (() => {
+              const updated = { ...row, [field]: nextAlgoId };
+              if (nextAlgoId && updated[otherField] === nextAlgoId) {
+                updated[otherField] = null;
+              }
+              return updated;
+            })()
+          : nextAlgoId && (row.equipped_algo_1 === nextAlgoId || row.equipped_algo_2 === nextAlgoId)
+            ? {
+                ...row,
+                equipped_algo_1: row.equipped_algo_1 === nextAlgoId ? null : row.equipped_algo_1,
+                equipped_algo_2: row.equipped_algo_2 === nextAlgoId ? null : row.equipped_algo_2,
+              }
+            : row
       ));
 
       if (nextAlgoId) {
         notify('success', `Equipped ${getEquippedAlgoName(nextAlgoId)} to slot ${slot}`);
+        if ((result?.movedFromCards ?? 0) > 0) {
+          notify('info', 'This algorithm card was moved from another problem card to keep equip limits valid.');
+        }
       } else {
         notify('success', `Unequipped slot ${slot}`);
       }
@@ -182,20 +484,15 @@
       const result = await api.targetedSync($currentUser.id, titleSlug);
 
       if (result.status === 'unlocked' || result.status === 'upgraded' || result.status === 'already_unlocked') {
-        userCollection.update((rows) =>
-          rows.map((row: any) => {
-            const rowCard = pickCard(row);
-            if (getCardTitleSlug(rowCard) !== titleSlug) return row;
-            if (row.tier !== 'locked') return row;
-            return { ...row, tier: 'base' };
-          })
-        );
+        const refreshedCollection = await api.getCollection($currentUser.id);
+        userCollection.set(refreshedCollection as any[]);
 
-        if (selectedCard && getCardTitleSlug(pickCard(selectedCard)) === titleSlug) {
-          selectedCard = {
-            ...selectedCard,
-            tier: 'base',
-          };
+        const updatedRow = (refreshedCollection as any[]).find((row: any) => {
+          const rowCard = pickCard(row);
+          return getCardTitleSlug(rowCard) === titleSlug;
+        });
+        if (updatedRow && selectedCard && getCardTitleSlug(pickCard(selectedCard)) === titleSlug) {
+          selectedCard = updatedRow;
         }
 
         setModalSyncFeedback(titleSlug, {
@@ -242,14 +539,18 @@
 
   $: filtered = $userCollection.filter((uc: any) => {
     const card = pickCard(uc);
+    const title = String(card?.title ?? '').toLowerCase();
+    const rarity = getCardRarity(card);
+    const cardElementKey = normalizeElementKey(getCardElement(card));
+    const filterElementKey = normalizeElementKey(filterElement);
 
     if (catalogView === 'core' && !isBattleCoreCard(uc)) return false;
     if (catalogView === 'extended' && !isExtendedCard(uc)) return false;
 
-    if (search && !card.title?.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filterRarity !== 'all' && card.rarity !== filterRarity) return false;
-    if (filterElement !== 'all' && card.element_type !== filterElement) return false;
-    if (!matchesTierFilter(uc.tier)) return false;
+    if (search && !title.includes(search.toLowerCase())) return false;
+    if (filterRarity !== 'all' && rarity !== filterRarity.toLowerCase()) return false;
+    if (filterElement !== 'all' && cardElementKey !== filterElementKey) return false;
+    if (!matchesTierFilter(uc.tier, filterTier)) return false;
     return true;
   });
 
@@ -274,7 +575,7 @@
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
     <div>
       <h1 class="text-3xl font-black">My Collection</h1>
-      <p class="text-gray-500 text-sm mt-0.5">{ownedCards.length} cards owned</p>
+      <p class="text-gray-500 text-sm mt-0.5">{ownedCards.length} unlocked cards</p>
     </div>
 
     <!-- Stats row -->
@@ -407,6 +708,7 @@
             titleSlug={card.title_slug ?? card.titleSlug ?? ''}
             rarity={card.rarity ?? 'common'}
             elementType={card.element_type ?? card.elementType ?? 'Array'}
+            catalogType={getCardCatalogType(card)}
             baseAtk={card.base_atk ?? card.baseAtk ?? 0}
             baseDef={card.base_def ?? card.baseDef ?? 0}
             baseHp={card.base_hp ?? card.baseHp ?? 0}
@@ -416,21 +718,6 @@
             onClick={() => openCardModal(uc)}
           />
 
-          {#if uc.tier === 'locked' && isSeededCoreCatalogCard(card)}
-            <button
-              on:click={() => syncLockedCoreCard(uc)}
-              disabled={targetedSyncing || !hasLinkedLeetCode}
-              class="w-full py-1.5 px-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 bg-sky-700 hover:bg-sky-600 text-white"
-            >
-              {#if targetedSyncing && targetedSyncingSlug === getCardTitleSlug(card)}
-                Syncing...
-              {:else if !hasLinkedLeetCode}
-                Link LeetCode To Sync
-              {:else}
-                Sync Unlock
-              {/if}
-            </button>
-          {/if}
         </div>
       {/each}
     </div>
@@ -448,28 +735,99 @@
     {#if $userAlgoCards.length === 0}
       <p class="text-sm text-gray-500">Open packs to obtain your first trap/effect card.</p>
     {:else}
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <p class="text-[11px] text-gray-500 mb-3">Click any algorithm card to view full details.</p>
+      <div class="flex flex-wrap gap-3">
         {#each $userAlgoCards as algo (algo.id)}
-          <AlgorithmCard
-            name={algo.name}
-            slug={algo.slug}
-            description={algo.description}
-            abilityName={algo.abilityName}
-            abilityDescription={algo.abilityDescription}
-            mode={algo.mode}
-            themeTemplate={algo.themeTemplate}
-            themeTokens={algo.themeTokens}
-            compact={true}
-          />
+          <button
+            type="button"
+            on:click={() => openAlgoCardModal(algo)}
+            class="text-left rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70"
+          >
+            <AlgorithmCard
+              name={algo.name}
+              slug={algo.slug}
+              abilityName={algo.abilityName}
+              abilityDescription={algo.abilityDescription}
+              mode={algo.mode}
+              themeTemplate={algo.themeTemplate}
+              themeTokens={algo.themeTokens}
+              compact={true}
+            />
+          </button>
         {/each}
       </div>
     {/if}
   </section>
 </div>
 
+{#if selectedAlgoCard}
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div
+    class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+    on:click={closeAlgoCardModal}
+    on:keypress={(e) => e.key === 'Escape' && closeAlgoCardModal()}
+    role="dialog"
+    tabindex="-1"
+  >
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div
+      class="bg-gray-900 border border-gray-800 rounded-2xl p-5 sm:p-6 max-w-lg w-full max-h-[88vh] overflow-y-auto"
+      on:click|stopPropagation={() => {}}
+      on:keypress|stopPropagation={() => {}}
+    >
+      <div class="flex justify-center mb-4">
+        <AlgorithmCard
+          name={selectedAlgoCard.name}
+          slug={selectedAlgoCard.slug}
+          abilityName={selectedAlgoCard.abilityName}
+          abilityDescription={selectedAlgoCard.abilityDescription}
+          mode={selectedAlgoCard.mode}
+          themeTemplate={selectedAlgoCard.themeTemplate}
+          themeTokens={selectedAlgoCard.themeTokens}
+          compact={false}
+        />
+      </div>
+
+      <div class="space-y-3 text-sm">
+        <div class="flex justify-between gap-3">
+          <span class="text-gray-500">Type</span>
+          <span class="font-bold uppercase">{selectedAlgoCard.mode ?? 'effect'} card</span>
+        </div>
+        <div class="flex justify-between gap-3">
+          <span class="text-gray-500">Theme</span>
+          <span class="font-bold uppercase">{selectedAlgoCard.themeTemplate ?? 'stone'}</span>
+        </div>
+        <div class="rounded-xl border border-gray-800 bg-gray-800/50 px-3 py-2">
+          <p class="text-[11px] uppercase tracking-wide text-gray-400 mb-1">Description</p>
+          <p class="text-sm text-gray-200 leading-relaxed">{selectedAlgoCard.description || 'No description available.'}</p>
+        </div>
+        <div class="rounded-xl border border-gray-800 bg-gray-800/50 px-3 py-2">
+          <p class="text-[11px] uppercase tracking-wide text-gray-400 mb-1">Ability</p>
+          <p class="text-sm font-semibold text-sky-200" title={selectedAlgoCard.abilityName || 'Battle Protocol'}>
+            {shortenAlgoAbilityName(selectedAlgoCard.abilityName || 'Battle Protocol', 24)}
+          </p>
+          <p class="text-sm text-gray-200 leading-relaxed mt-1">{selectedAlgoCard.abilityDescription || 'No ability detail available.'}</p>
+        </div>
+      </div>
+
+      <button
+        on:click={closeAlgoCardModal}
+        class="mt-4 w-full py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm transition-colors"
+      >
+        Close
+      </button>
+    </div>
+  </div>
+{/if}
+
 <!-- Card detail modal -->
 {#if selectedCard}
   {@const card = pickCard(selectedCard)}
+  {@const currentTier = normalizeProblemTier(selectedCard.tier)}
+  {@const currentTierIndex = getProblemTierIndex(currentTier)}
+  {@const tierProgressPercent = getTierProgressPercent(selectedCard, card)}
+  {@const tierConditionSummary = getTierConditionSummary(selectedCard, card)}
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
   <div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
@@ -477,28 +835,82 @@
       on:keypress={(e) => e.key === 'Escape' && closeCardModal()}
        role="dialog" tabindex="-1">
     <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 max-w-sm w-full"
+    <div class="bg-gray-900 border border-gray-800 rounded-2xl p-5 sm:p-6 max-w-xl w-full max-h-[88vh] overflow-y-auto"
          on:click|stopPropagation={() => {}}
          on:keypress|stopPropagation={() => {}}>
-      <div class="flex justify-center mb-4">
+      <div class="flex justify-center mb-3">
         <Card
           title={card.title ?? ''}
           titleSlug={card.title_slug ?? card.titleSlug ?? ''}
           rarity={card.rarity ?? 'common'}
           elementType={card.element_type ?? card.elementType ?? 'Array'}
+          catalogType={getCardCatalogType(card)}
           baseAtk={card.base_atk ?? card.baseAtk ?? 0}
           baseDef={card.base_def ?? card.baseDef ?? 0}
           baseHp={card.base_hp ?? card.baseHp ?? 0}
           tier={selectedCard.tier ?? 'base'}
           isBlind75={card.is_blind75 ?? card.isBlind75 ?? false}
+          compact={true}
         />
       </div>
 
-      <div class="space-y-2 text-sm">
-        <div class="flex justify-between">
-          <span class="text-gray-500">Tier</span>
-          <span class="font-bold capitalize">{selectedCard.tier ?? 'base'}</span>
+      <div class="mb-3 rounded-xl border border-gray-800 bg-gray-800/45 px-3 py-2.5">
+        <p class="text-[11px] uppercase tracking-wide text-gray-400 mb-1">Full Problem Name</p>
+        <p class="text-base sm:text-lg font-black text-gray-100 leading-tight break-words">
+          {card.title ?? 'Untitled Problem'}
+        </p>
+        {#if getCardTitleSlug(card)}
+          <p class="text-[11px] text-gray-500 mt-1">Slug: {getCardTitleSlug(card)}</p>
+        {/if}
+      </div>
+
+      <div class="mb-4 rounded-xl border border-sky-700/30 bg-sky-900/10 px-3 py-2.5">
+        <p class="text-[11px] uppercase tracking-wide text-sky-300/80 mb-1">LeetCode Problem Summary</p>
+        {#if problemSummaryLoading && problemSummaryLoadedSlug === getCardTitleSlug(card)}
+          <p class="text-sm text-gray-400 leading-relaxed">Loading summary from LeetCode...</p>
+        {:else if problemSummaryText}
+          <p class="text-sm text-gray-200 leading-relaxed">{problemSummaryText}</p>
+          {#if problemSummarySource === 'leetcode'}
+            <p class="text-[11px] text-gray-500 mt-1">Source: LeetCode</p>
+          {/if}
+        {:else}
+          <p class="text-sm text-gray-200 leading-relaxed">{buildFallbackCardSummary(card, selectedCard.tier ?? 'base')}</p>
+          <p class="text-[11px] text-gray-500 mt-1">Live LeetCode summary unavailable right now.</p>
+        {/if}
+      </div>
+
+      <div class="mb-4 rounded-xl border border-amber-500/25 bg-amber-900/10 px-3 py-3">
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <p class="text-[11px] uppercase tracking-wide text-amber-300/80">Tier Progress</p>
+          <span class="text-xs font-bold uppercase tracking-wide text-amber-100">{formatProblemTier(currentTier)}</span>
         </div>
+
+        <div class="h-2 w-full rounded-full bg-gray-800 overflow-hidden">
+          <div
+            class="h-full rounded-full bg-gradient-to-r from-sky-500 via-indigo-500 to-amber-400 transition-[width] duration-300"
+            style={`width: ${Math.max(4, Math.min(100, tierProgressPercent)).toFixed(1)}%`}
+          ></div>
+        </div>
+
+        <div class="mt-2 grid grid-cols-4 gap-2 text-[10px] uppercase tracking-wide">
+          {#each PROBLEM_TIER_ORDER as tierStep, index}
+            <span
+              class="font-semibold text-center"
+              class:text-sky-200={index <= currentTierIndex}
+              class:text-gray-500={index > currentTierIndex}
+            >
+              {formatProblemTier(tierStep)}
+            </span>
+          {/each}
+        </div>
+
+        <p class="mt-2 text-xs text-gray-200 leading-relaxed">{tierConditionSummary.current}</p>
+        {#if tierConditionSummary.next}
+          <p class="mt-1 text-[11px] text-sky-200 leading-relaxed">{tierConditionSummary.next}</p>
+        {/if}
+      </div>
+
+      <div class="space-y-2 text-sm">
         <div class="flex justify-between">
           <span class="text-gray-500">Difficulty</span>
           <span class="font-bold">{card.difficulty ?? '—'}</span>
@@ -509,7 +921,7 @@
         </div>
         <div class="flex justify-between">
           <span class="text-gray-500">Tags</span>
-          <span class="text-right text-gray-400 text-xs max-w-36 truncate">
+          <span class="text-right text-gray-400 text-xs max-w-[14rem] break-words leading-snug">
             {(card.tags ?? []).join(', ') || '—'}
           </span>
         </div>
@@ -525,6 +937,7 @@
 
       <div class="mt-4 border-t border-gray-800 pt-4">
         <p class="text-xs uppercase tracking-wide text-gray-400 mb-2">Equip Trap/Effect Card</p>
+        <p class="text-[11px] text-gray-500 mb-2">Each algorithm card can be equipped to only one slot on one problem card at a time.</p>
         {#if $userAlgoCards.length === 0}
           <p class="text-xs text-gray-500">No algorithm cards available yet.</p>
         {:else}
