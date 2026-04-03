@@ -3,8 +3,10 @@ import { supabase } from '$lib/supabase';
 import type { AlgorithmThemeTokens } from '@leetarena/types';
 
 const API_TIMEOUT_MS = 12000;
+const SYNC_API_TIMEOUT_MS = 90000;
+const TARGETED_SYNC_TIMEOUT_MS = 45000;
 
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = API_TIMEOUT_MS): Promise<T> {
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -17,7 +19,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   let res: Response;
   try {
@@ -50,12 +52,15 @@ export const api = {
   triggerSync: (userId: string) =>
     apiFetch<{
       synced: number;
+      newSubmissions: number;
+      uniqueProblems: number;
       unlocked: number;
       upgraded: number;
       skippedOutOfCatalog: number;
+      skippedNoMetadata: number;
       gemsAwarded: number;
       extendedCatalogEnabled: boolean;
-    }>(`/sync/trigger/${userId}`, { method: 'POST' }),
+    }>(`/sync/trigger/${userId}`, { method: 'POST' }, SYNC_API_TIMEOUT_MS),
   targetedSync: (userId: string, titleSlug: string) =>
     apiFetch<{
       status: 'unlocked' | 'upgraded' | 'already_unlocked' | 'out_of_catalog' | 'no_metadata' | 'not_found';
@@ -68,12 +73,18 @@ export const api = {
     }>(`/sync/targeted/${userId}`, {
       method: 'POST',
       body: JSON.stringify({ titleSlug }),
-    }),
+    }, TARGETED_SYNC_TIMEOUT_MS),
 
   // Packs
   openPack: (userId: string, packType: string, elementFilter?: string, includeExtendedPool = false) =>
     apiFetch<{
       cards: unknown[];
+      cardRewards: Array<{
+        cardId: string;
+        tier: 'locked' | 'base' | 'proven' | 'mastered';
+        isNew: boolean;
+        duplicateCount: number;
+      }>;
       algorithmCards: Array<{
         id: string;
         slug: string;
@@ -87,12 +98,57 @@ export const api = {
         isNew: boolean;
       }>;
       rarities: string[];
+      rolledRarities: string[];
       coinsSpent: number;
       duplicateCompensationCoins: number;
       usedExtendedPool: boolean;
     }>('/packs/open', {
       method: 'POST',
       body: JSON.stringify({ userId, packType, elementFilter, includeExtendedPool }),
+    }),
+  getBeginnerPackStatus: (userId: string) =>
+    apiFetch<{
+      claimable: boolean;
+      claimedAt: string | null;
+      rewardSpec: {
+        coreCards: number;
+        algorithmCards: number;
+        solveOnlyCoreUnlock: boolean;
+        storageMode?: 'users-column' | 'sync-fallback';
+      };
+    }>(`/packs/beginner/status/${userId}`),
+  claimBeginnerPack: (userId: string) =>
+    apiFetch<{
+      claimedAt: string;
+      coreCards: Array<{
+        id: string;
+        titleSlug: string;
+        title: string;
+        rarity: string;
+        elementType: string;
+        baseAtk: number;
+        baseDef: number;
+        baseHp: number;
+        isBlind75: boolean;
+        isNew: boolean;
+      }>;
+      algorithmCards: Array<{
+        id: string;
+        slug: string;
+        name: string;
+        description: string;
+        abilityName: string;
+        abilityDescription: string;
+        mode: 'trap' | 'effect';
+        themeTemplate: string;
+        themeTokens: AlgorithmThemeTokens;
+        isNew: boolean;
+      }>;
+      coreCardCount: number;
+      algorithmCardCount: number;
+    }>('/packs/claim-beginner', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
     }),
 
   // Cards
@@ -132,10 +188,23 @@ export const api = {
       body: JSON.stringify({ userId, userCardId }),
     }),
   equipAlgo: (userId: string, problemCardId: string, algoCardId: string | null, slot: 1 | 2) =>
-    apiFetch('/cards/equip', {
+    apiFetch<{
+      success: boolean;
+      action: 'equipped' | 'unequipped';
+      movedFromCards: number;
+      slot: 1 | 2;
+    }>('/cards/equip', {
       method: 'POST',
       body: JSON.stringify({ userId, problemCardId, algoCardId, slot }),
     }),
+  getProblemSummary: (titleSlug: string) =>
+    apiFetch<{
+      title?: string;
+      titleSlug: string;
+      difficulty?: 'Easy' | 'Medium' | 'Hard';
+      summary: string | null;
+      source: 'leetcode' | 'unavailable';
+    }>(`/cards/summary/${encodeURIComponent(titleSlug)}`),
 
   // Battle
   createBattle: (player1Id: string, player2Id: string, deck1Id: string, deck2Id: string) =>
@@ -152,5 +221,17 @@ export const api = {
     apiFetch('/battle/finish', {
       method: 'POST',
       body: JSON.stringify({ battleId, winnerId, loserId }),
+    }),
+  finishBotBattle: (userId: string, difficulty: 'easy' | 'normal' | 'hard', didWin: boolean) =>
+    apiFetch<{
+      success: boolean;
+      userId: string;
+      didWin: boolean;
+      difficulty: 'easy' | 'normal' | 'hard';
+      coinsAwarded: number;
+      totalCoins: number;
+    }>('/battle/finish-bot', {
+      method: 'POST',
+      body: JSON.stringify({ userId, difficulty, didWin }),
     }),
 };
