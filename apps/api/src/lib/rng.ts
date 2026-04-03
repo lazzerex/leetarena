@@ -11,6 +11,7 @@ export interface PackConfig {
 
 export const PACK_CONFIGS: Record<PackType, PackConfig> = {
   daily: { size: 4, rarityOverrides: { common: 0.75, rare: 0.25, epic: 0, legendary: 0 } },
+  core: { size: 5 },
   topic: { size: 4, elementFilter: undefined },
   blind75: { size: 5, blind75Only: true, rarityOverrides: { common: 0, rare: 0.45, epic: 0.4, legendary: 0.15 } },
   contest: { size: 5, guaranteedRarity: 'epic' },
