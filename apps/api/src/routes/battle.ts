@@ -28,6 +28,18 @@ const FinishBattleSchema = z.object({
   loserId: z.string().uuid(),
 });
 
+const FinishBotBattleSchema = z.object({
+  userId: z.string().uuid(),
+  difficulty: z.enum(['easy', 'normal', 'hard']),
+  didWin: z.boolean(),
+});
+
+const BOT_BATTLE_REWARDS = {
+  easy: { win: 60, loss: 20 },
+  normal: { win: 100, loss: 25 },
+  hard: { win: 150, loss: 35 },
+} as const;
+
 /** Create a new battle */
 battleRoutes.post('/create', async (c) => {
   const body = await c.req.json();
@@ -228,6 +240,47 @@ battleRoutes.post('/finish', async (c) => {
   ]);
 
   return c.json({ rewards });
+});
+
+/** Finish a bot battle and issue coins (no rating impact). */
+battleRoutes.post('/finish-bot', async (c) => {
+  const body = await c.req.json();
+  const parsed = FinishBotBattleSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+
+  const { userId, difficulty, didWin } = parsed.data;
+  if (!isOwner(authUser, userId)) {
+    return c.json({ error: 'Forbidden: userId must match authenticated user' }, 403);
+  }
+
+  const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+  const rewardConfig = BOT_BATTLE_REWARDS[difficulty];
+  const coinsAwarded = didWin ? rewardConfig.win : rewardConfig.loss;
+
+  const users = await (await db.from('users')).select<Array<{ id: string; coins: number }>>(
+    'id,coins',
+    { id: `eq.${userId}` }
+  );
+
+  const user = users[0];
+  if (!user) {
+    return c.json({ error: 'User not found' }, 404);
+  }
+
+  const totalCoins = Number(user.coins) + coinsAwarded;
+  await (await db.from('users')).update({ coins: totalCoins }, { id: `eq.${userId}` });
+
+  return c.json({
+    success: true,
+    userId,
+    didWin,
+    difficulty,
+    coinsAwarded,
+    totalCoins,
+  });
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
