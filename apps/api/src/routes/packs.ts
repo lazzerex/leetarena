@@ -21,6 +21,7 @@ const BEGINNER_PACK_FALLBACK_KEY = '__beginner_pack_claimed_at';
 
 const ALGORITHM_REWARDS_PER_PACK: Record<PackType, number> = {
   daily: 1,
+  core: 0,
   topic: 1,
   blind75: 2,
   contest: 1,
@@ -61,7 +62,7 @@ type PackCandidateCard = {
 
 const OpenPackSchema = z.object({
   userId: z.string().uuid(),
-  packType: z.enum(['daily', 'topic', 'blind75', 'contest', 'company']),
+  packType: z.enum(['daily', 'core', 'topic', 'blind75', 'contest', 'company']),
   elementFilter: z.string().optional(), // for topic packs
   includeExtendedPool: z.boolean().optional(),
 });
@@ -469,7 +470,7 @@ async function rollbackBeginnerFallbackLock(
 }
 
 function pickAlgorithmDefinitionsForPack(packType: PackType): AlgorithmCardDefinition[] {
-  const count = Math.max(1, ALGORITHM_REWARDS_PER_PACK[packType] ?? 1);
+  const count = Math.max(0, ALGORITHM_REWARDS_PER_PACK[packType] ?? 1);
   const shuffled = [...ALGORITHM_CARD_CATALOG].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, Math.min(count, shuffled.length));
 }
