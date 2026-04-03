@@ -9,12 +9,18 @@
     packRevealCards,
     packRevealOpen,
   } from '$lib/stores';
+  import type { PackRevealAlgorithmCard, PackRevealCard } from '$lib/stores';
   import Swords from 'lucide-svelte/icons/swords';
   import Check from 'lucide-svelte/icons/check';
 
   let revealIndex = -1;
   let allRevealed = false;
   let revealSessionSignature = '';
+  let revealItems: RevealItem[] = [];
+
+  type RevealItem =
+    | { type: 'problem'; id: string; isNew: boolean; card: PackRevealCard }
+    | { type: 'algorithm'; id: string; isNew: boolean; card: PackRevealAlgorithmCard };
 
   $: cards = $packRevealCards;
   $: algorithmCards = $packRevealAlgorithmCards;
@@ -22,6 +28,22 @@
     ...cards.map((card) => ({ type: 'problem' as const, id: card.id, isNew: card.isNew, card })),
     ...algorithmCards.map((card) => ({ type: 'algorithm' as const, id: card.id, isNew: card.isNew, card })),
   ];
+
+  const CORE_PROBLEM_BACK_ASSET = '/assets/scifi-card/back.png';
+  const EXTENDED_PROBLEM_BACK_ASSET = '/assets/extended-card/back.png';
+  const ALGORITHM_BACK_ASSET = '/assets/algo-fantasy/back.png';
+
+  function getRevealBackTheme(item: RevealItem): 'core' | 'extended' | 'algorithm' {
+    if (item.type === 'algorithm') return 'algorithm';
+    return item.card.catalogType === 'extended' ? 'extended' : 'core';
+  }
+
+  function getRevealBackAsset(item: RevealItem): string {
+    const theme = getRevealBackTheme(item);
+    if (theme === 'algorithm') return ALGORITHM_BACK_ASSET;
+    if (theme === 'extended') return EXTENDED_PROBLEM_BACK_ASSET;
+    return CORE_PROBLEM_BACK_ASSET;
+  }
 
   $: revealItemsSignature = revealItems.map((item) => `${item.type}-${item.id}`).join('|');
 
@@ -36,14 +58,6 @@
   }
 
   $: newCards = revealItems.filter((item) => item.isNew);
-
-  function isRevealed(index: number): boolean {
-    return index <= revealIndex;
-  }
-
-  function isNextReveal(index: number): boolean {
-    return index === revealIndex + 1;
-  }
 
   function revealNext() {
     if (revealItems.length === 0) return;
@@ -60,8 +74,14 @@
   }
 
   function revealFromSlot(index: number) {
-    if (!isNextReveal(index)) return;
+    if (index <= revealIndex) return;
     revealNext();
+  }
+
+  function onSceneKeydown(event: KeyboardEvent, index: number) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    revealFromSlot(index);
   }
 
   function revealAll() {
@@ -94,9 +114,17 @@
       <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1">
         <div class="pack-grid">
           {#each revealItems as item, i (`${item.type}-${item.id}`)}
+            {@const revealed = i <= revealIndex}
+            {@const canReveal = i === revealIndex + 1}
+            {@const backTheme = getRevealBackTheme(item)}
+            {@const backAsset = getRevealBackAsset(item)}
             <div animate:flip={{ duration: 260 }} class="reveal-item text-center">
-              <div class="reveal-scene">
-                <div class="reveal-inner" class:is-revealed={isRevealed(i)}>
+              <!-- svelte-ignore a11y-no-static-element-interactions -->
+              <div
+                class="reveal-scene"
+                class:is-revealed={revealed}
+              >
+                <div class="reveal-inner" style={`transform: rotateY(${revealed ? 180 : 0}deg);`}>
                   <div class="reveal-face reveal-front-face">
                     {#if item.type === 'problem'}
                       <Card
@@ -104,10 +132,11 @@
                         titleSlug={item.card.titleSlug}
                         rarity={item.card.rarity}
                         elementType={item.card.elementType}
+                        catalogType={item.card.catalogType === 'extended' ? 'extended' : 'core'}
                         baseAtk={item.card.baseAtk}
                         baseDef={item.card.baseDef}
                         baseHp={item.card.baseHp}
-                        tier="base"
+                        tier={item.card.tier ?? 'base'}
                         compact={true}
                       />
                     {:else}
@@ -127,38 +156,45 @@
                   <div class="reveal-face reveal-back-face">
                     <div
                       class="reveal-back-card w-36 h-52 rounded-xl border-2 border-slate-500/80 flex items-center justify-center transition-all duration-200"
-                      class:back-clickable={isNextReveal(i)}
-                      class:back-locked={!isNextReveal(i)}
+                      class:back-clickable={canReveal}
+                      class:back-locked={!canReveal}
+                      class:back-core={backTheme === 'core'}
+                      class:back-extended={backTheme === 'extended'}
+                      class:back-algorithm={backTheme === 'algorithm'}
                     >
-                      <div class="reveal-back-art absolute inset-0" style="background-image: url('/assets/scifi-card/back.png');"></div>
+                      <div class="reveal-back-art absolute inset-0" style="background-image: url('{backAsset}');"></div>
                       <div class="reveal-back-overlay absolute inset-0"></div>
                       <div class="text-center relative z-10">
                         <div class="text-3xl mb-1 inline-flex"><Swords size={24} /></div>
                         <div class="text-cyan-100/85 text-xs tracking-wide">
-                          {#if isNextReveal(i)}Tap to reveal{:else}Queued{/if}
+                          {#if canReveal}Tap to reveal{:else}Queued{/if}
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {#if item.card.isNew && isRevealed(i)}
-                  <div class="absolute -top-2 -right-2 bg-green-500 text-white text-xs px-1.5 py-0.5 rounded-full font-bold z-10 pointer-events-none">
-                    NEW
+                {#if item.card.isNew && revealed}
+                  <div class="new-ribbon-wrap absolute top-0 right-0 z-50 pointer-events-none" aria-hidden="true">
+                    <span class="new-ribbon">NEW</span>
                   </div>
                 {/if}
 
                 <button
                   type="button"
-                  class="reveal-overlay-btn absolute inset-0 z-20"
+                  class="reveal-hit-target absolute inset-0 z-30"
+                  class:hit-target-active={canReveal && !revealed}
                   aria-label={`Reveal card ${i + 1}`}
-                  on:click={() => revealFromSlot(i)}
-                  disabled={!isNextReveal(i) || isRevealed(i)}
-                  tabindex={isNextReveal(i) && !isRevealed(i) ? 0 : -1}
-                />
+                  aria-disabled={!canReveal || revealed}
+                  tabindex={canReveal && !revealed ? 0 : -1}
+                  on:pointerup|stopPropagation={() => revealFromSlot(i)}
+                  on:click|stopPropagation={() => revealFromSlot(i)}
+                  on:keydown|stopPropagation={(event) => onSceneKeydown(event, i)}
+                ></button>
+
               </div>
 
-              {#if isRevealed(i)}
+              {#if revealed}
                 {#if item.type === 'problem'}
                   <a
                     href={buildLeetCodeProblemUrl(item.card.titleSlug)}
@@ -254,15 +290,12 @@
     will-change: transform;
   }
 
-  .reveal-inner.is-revealed {
-    transform: rotateY(180deg);
-  }
-
   .reveal-face {
     position: absolute;
     inset: 0;
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
+    transition: opacity 220ms ease;
   }
 
   .reveal-front-face {
@@ -276,7 +309,49 @@
   .reveal-back-card {
     position: relative;
     overflow: hidden;
+    background: transparent;
+    padding: 0;
+    --reveal-back-glow: rgba(34, 211, 238, 0.34);
+    --reveal-back-line: rgba(148, 163, 184, 0.08);
     box-shadow: 0 10px 18px -14px rgba(34, 211, 238, 0.6);
+  }
+
+  .reveal-back-card.back-core {
+    border-color: rgba(71, 85, 105, 0.8);
+  }
+
+  .reveal-back-card.back-extended {
+    --reveal-back-glow: rgba(244, 63, 94, 0.36);
+    --reveal-back-line: rgba(251, 113, 133, 0.1);
+    border-color: rgba(244, 63, 94, 0.58);
+    box-shadow: 0 10px 18px -14px rgba(244, 63, 94, 0.62);
+  }
+
+  .reveal-back-card.back-algorithm {
+    --reveal-back-glow: rgba(129, 140, 248, 0.34);
+    --reveal-back-line: rgba(199, 210, 254, 0.08);
+    border-color: rgba(129, 140, 248, 0.58);
+    box-shadow: 0 10px 18px -14px rgba(129, 140, 248, 0.62);
+  }
+
+  .reveal-scene:not(.is-revealed) .reveal-front-face {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .reveal-scene:not(.is-revealed) .reveal-back-face {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .reveal-scene.is-revealed .reveal-front-face {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .reveal-scene.is-revealed .reveal-back-face {
+    opacity: 0;
+    pointer-events: none;
   }
 
   .reveal-back-art {
@@ -287,20 +362,8 @@
 
   .reveal-back-overlay {
     background:
-      radial-gradient(circle at 50% 52%, rgba(34, 211, 238, 0.34) 0%, rgba(2, 6, 23, 0.06) 42%, rgba(2, 6, 23, 0.34) 100%),
-      repeating-linear-gradient(180deg, rgba(148, 163, 184, 0.08) 0, rgba(148, 163, 184, 0.08) 1px, transparent 1px, transparent 4px);
-  }
-
-  .reveal-overlay-btn {
-    background: transparent;
-    border: 0;
-    padding: 0;
-    margin: 0;
-    cursor: default;
-  }
-
-  .reveal-overlay-btn:disabled {
-    pointer-events: none;
+      radial-gradient(circle at 50% 52%, var(--reveal-back-glow) 0%, rgba(2, 6, 23, 0.06) 42%, rgba(2, 6, 23, 0.34) 100%),
+      repeating-linear-gradient(180deg, var(--reveal-back-line) 0, var(--reveal-back-line) 1px, transparent 1px, transparent 4px);
   }
 
   .back-clickable {
@@ -318,6 +381,44 @@
     transform: translateY(-2px);
   }
 
+  .reveal-hit-target {
+    background: transparent;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    cursor: default;
+  }
+
+  .reveal-hit-target.hit-target-active {
+    cursor: pointer;
+  }
+
+  .new-ribbon-wrap {
+    width: 3.25rem;
+    height: 3.25rem;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(-3px);
+    animation: revealNewRibbon 140ms ease 320ms forwards;
+  }
+
+  .new-ribbon {
+    position: absolute;
+    top: 0.45rem;
+    right: -1.15rem;
+    width: 4.4rem;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #f0fdf4;
+    background: linear-gradient(180deg, #22c55e, #16a34a);
+    border: 1px solid rgba(240, 253, 244, 0.55);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    transform: rotate(45deg);
+    box-shadow: 0 10px 14px -10px rgba(34, 197, 94, 0.95);
+  }
+
   @keyframes revealPulse {
     0%,
     100% {
@@ -325,6 +426,17 @@
     }
     50% {
       box-shadow: 0 14px 24px -14px rgba(34, 211, 238, 0.8);
+    }
+  }
+
+  @keyframes revealNewRibbon {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 
