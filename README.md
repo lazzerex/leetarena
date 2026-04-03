@@ -9,6 +9,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/SvelteKit-FF3E00?style=flat&logo=svelte&logoColor=white"/>
   <img src="https://img.shields.io/badge/Hono-E36002?style=flat&logo=hono&logoColor=white"/>
+  <img src="https://img.shields.io/badge/GraphQL-E10098?style=flat&logo=graphql&logoColor=white"/>
+  <img src="https://img.shields.io/badge/LeetCode%20Sync-GraphQL-E10098?style=flat&logo=graphql&logoColor=white"/>
   <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white"/>
   <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=flat&logo=node.js&logoColor=white"/>
   <img src="https://img.shields.io/badge/pnpm-9-F69220?style=flat&logo=pnpm&logoColor=white"/>
@@ -25,15 +27,22 @@
   <img src="https://img.shields.io/github/contributors/lazzerex/leetarena?style=flat"/>
   <img src="https://img.shields.io/github/issues-pr-raw/lazzerex/leetarena?label=pull%20requests&style=flat&color=yellow"/>
   <img src="https://img.shields.io/github/issues/lazzerex/leetarena?label=issues&style=flat&color=red"/>
-  <img src="https://img.shields.io/badge/Status-Active%20MVP-orange?style=flat"/>
+  <img src="https://img.shields.io/badge/Release-v0.1.0--beta.1-blue?style=flat"/>
+  <img src="https://img.shields.io/badge/Status-Beta%20WIP-orange?style=flat"/>
   <img src="https://img.shields.io/badge/Real--time-Supabase%20Realtime-blue?style=flat&logo=supabase"/>
 </p>
 
 <p align="center">
-  <strong>A WIP trading card game where LeetCode problems become collectible battle cards.</strong>
+  <strong>A trading card game where LeetCode problems become collectible battle cards.</strong>
 </p>
 
 LeetArena blends coding practice with card-game progression. You can solve problems, strengthen your collection, and battle other players.
+
+## Release Status
+
+- Current first public release: v0.1.0-beta.1
+- Project state: not feature-complete yet
+- Important: expect breaking changes in future updates while core systems are still evolving
 
 ## What Is LeetArena?
 
@@ -171,16 +180,13 @@ API:
 - pnpm catalog:manifest:validate
 - pnpm seed:core-catalog
 
-## Deployment
+## Assets Credits
 
-API (Cloudflare Workers):
-1. Configure worker secrets.
-2. Deploy from apps/api.
+UI and card-pack assets used in this project are credited to:
+- Tornioduva Card Pack (itch.io): https://tornioduva.itch.io/tornioduva-card-pack
+- Free Card Packs by Argametina (itch.io): https://argametina.itch.io/free-card-packs
 
-Web (Vercel):
-1. Import repository with apps/web as project root.
-2. Configure public environment variables.
-3. Deploy.
+Please follow each creator's license and usage terms on their itch.io pages.
 
 ## License
 
