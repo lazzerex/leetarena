@@ -138,6 +138,9 @@ export interface PackRevealCard {
   title: string;
   rarity: Rarity;
   elementType: Element;
+  catalogType?: 'core' | 'extended';
+  tier?: 'locked' | 'base' | 'proven' | 'mastered';
+  duplicateCount?: number;
   baseAtk: number;
   baseDef: number;
   baseHp: number;
