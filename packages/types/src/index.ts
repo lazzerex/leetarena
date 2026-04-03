@@ -370,7 +370,7 @@ export interface BattleRewards {
 
 // ─── Pack ─────────────────────────────────────────────────────────────────────
 
-export type PackType = 'daily' | 'topic' | 'blind75' | 'contest' | 'company';
+export type PackType = 'daily' | 'core' | 'topic' | 'blind75' | 'contest' | 'company';
 
 export interface Pack {
   id: string;
@@ -382,6 +382,7 @@ export interface Pack {
 
 export const PACK_COSTS: Record<PackType, number | 'free' | 'earned'> = {
   daily: 'free',
+  core: 300,
   topic: 500,
   blind75: 1500,
   contest: 'earned',
