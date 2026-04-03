@@ -30,9 +30,12 @@
   } | null = null;
   let syncResult: {
     synced: number;
+    newSubmissions: number;
+    uniqueProblems: number;
     unlocked: number;
     upgraded: number;
     skippedOutOfCatalog: number;
+    skippedNoMetadata: number;
     extendedCatalogEnabled: boolean;
   } | null = null;
   let stats = { wins: 0, battles: 0, collection: 0, mastered: 0 };
@@ -79,7 +82,7 @@
       .from('leetcode_sync')
       .select('last_synced_at')
       .eq('user_id', sessionUserId)
-      .single();
+      .maybeSingle();
     lastSynced = syncState?.last_synced_at ?? null;
 
     // Load stats
@@ -128,7 +131,11 @@
     try {
       syncResult = await api.triggerSync($currentUser.id);
       lastSynced = new Date().toISOString();
-      notify('success', `Sync complete: ${syncResult.synced} new solve${syncResult.synced !== 1 ? 's' : ''} processed.`);
+      if (syncResult.newSubmissions === 0) {
+        notify('info', 'No new accepted LeetCode submissions found since your last sync checkpoint.');
+      } else {
+        notify('success', `Sync complete: ${syncResult.synced} solve${syncResult.synced !== 1 ? 's' : ''} processed.`);
+      }
     } catch (e: any) {
       notify('error', e.message ?? 'Sync failed');
     } finally {
@@ -240,12 +247,13 @@
 
       {#if syncResult}
         <div class="mt-3 text-green-400 text-sm font-medium">
-          <span class="inline-flex items-center gap-1.5"><CircleCheckBig size={14} /> Synced {syncResult.synced} new submission{syncResult.synced !== 1 ? 's' : ''}</span>
+          <span class="inline-flex items-center gap-1.5"><CircleCheckBig size={14} /> Synced {syncResult.synced} submission{syncResult.synced !== 1 ? 's' : ''}</span>
         </div>
         <div class="mt-2 text-xs text-gray-400 space-y-1">
+          <p>New accepted submissions: {syncResult.newSubmissions} · Unique problems processed: {syncResult.uniqueProblems}</p>
           <p>Unlocked: {syncResult.unlocked} · Upgraded: {syncResult.upgraded}</p>
           <p>
-            Non-core submissions skipped: {syncResult.skippedOutOfCatalog}
+            Non-core submissions skipped: {syncResult.skippedOutOfCatalog} · Missing metadata: {syncResult.skippedNoMetadata}
             {syncResult.extendedCatalogEnabled ? ' (extended catalog enabled)' : ' (extended catalog disabled)'}
           </p>
         </div>
