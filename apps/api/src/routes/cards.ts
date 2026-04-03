@@ -3,6 +3,7 @@ import type { Env } from '../index';
 import { createSupabase } from '../lib/supabase';
 import { getAuthenticatedUser, isOwner } from '../lib/auth';
 import { ensureCoreCollectionInitialized } from '../lib/core-collection';
+import { getQuestionSummary } from '../lib/leetcode';
 import { ALGORITHM_CARD_CATALOG } from '@leetarena/types';
 
 export const cardRoutes = new Hono<{ Bindings: Env }>();
@@ -38,11 +39,35 @@ cardRoutes.get('/collection/:userId', async (c) => {
   await ensureCoreCollectionInitialized(userId, db);
 
   const userCards = await (await db.from('user_cards')).select(
-    'id,tier,equipped_algo_1,equipped_algo_2,obtained_at,card:cards(*)',
+    'id,tier,duplicate_count,extended_progress_slugs,equipped_algo_1,equipped_algo_2,obtained_at,card:cards(*)',
     { user_id: `eq.${userId}` }
   );
 
   return c.json(userCards);
+});
+
+/** Get LeetCode problem summary for a card */
+cardRoutes.get('/summary/:titleSlug', async (c) => {
+  const titleSlug = c.req.param('titleSlug').trim().toLowerCase();
+  if (!/^[a-z0-9-]+$/.test(titleSlug)) {
+    return c.json({ error: 'Invalid title slug' }, 400);
+  }
+
+  const authUser = await getAuthenticatedUser(c);
+  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+
+  const summary = await getQuestionSummary(titleSlug);
+  if (!summary) {
+    return c.json({ titleSlug, summary: null, source: 'unavailable' as const });
+  }
+
+  return c.json({
+    title: summary.title,
+    titleSlug: summary.titleSlug,
+    difficulty: summary.difficulty,
+    summary: summary.summary,
+    source: 'leetcode' as const,
+  });
 });
 
 /** Get a user's algorithm trap/effect cards */
@@ -225,7 +250,28 @@ cardRoutes.post('/equip', async (c) => {
   if (!isOwner(authUser, userId)) return c.json({ error: 'Forbidden' }, 403);
 
   const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+  if (slot !== 1 && slot !== 2) {
+    return c.json({ error: 'Invalid slot. Use 1 or 2.' }, 400);
+  }
+
   const field = slot === 1 ? 'equipped_algo_1' : 'equipped_algo_2';
+  const otherField = slot === 1 ? 'equipped_algo_2' : 'equipped_algo_1';
+
+  const targetRows = await (await db.from('user_cards')).select<Array<{
+    id: string;
+    equipped_algo_1?: string | null;
+    equipped_algo_2?: string | null;
+  }>>('id,equipped_algo_1,equipped_algo_2', {
+    user_id: `eq.${userId}`,
+    card_id: `eq.${problemCardId}`,
+  });
+
+  const targetUserCard = targetRows[0];
+  if (!targetUserCard) {
+    return c.json({ error: 'Problem card not found in user collection' }, 404);
+  }
+
+  let movedFromCards = 0;
 
   if (algoCardId) {
     const algoCards = await (await db.from('algorithm_cards')).select<Array<{ id: string }>>('id', {
@@ -236,14 +282,50 @@ cardRoutes.post('/equip', async (c) => {
     if (!algoCards[0]) {
       return c.json({ error: 'Algorithm card not found in user inventory' }, 404);
     }
+
+    // A single algorithm card can only be equipped to one slot on one problem card.
+    const equippedRows = await (await db.from('user_cards')).select<Array<{
+      id: string;
+      equipped_algo_1?: string | null;
+      equipped_algo_2?: string | null;
+    }>>('id,equipped_algo_1,equipped_algo_2', {
+      user_id: `eq.${userId}`,
+      or: `(equipped_algo_1.eq.${algoCardId},equipped_algo_2.eq.${algoCardId})`,
+    });
+
+    for (const row of equippedRows) {
+      const updates: Record<string, string | null> = {};
+      if (row.equipped_algo_1 === algoCardId) updates.equipped_algo_1 = null;
+      if (row.equipped_algo_2 === algoCardId) updates.equipped_algo_2 = null;
+      if (Object.keys(updates).length === 0) continue;
+
+      await (await db.from('user_cards')).update(updates, { id: `eq.${row.id}` });
+      if (row.id !== targetUserCard.id) {
+        movedFromCards += 1;
+      }
+    }
+  }
+
+  const updatePayload: Record<string, string | null> = {
+    [field]: algoCardId,
+  };
+
+  // Guarantee the same algorithm cannot occupy both slots on the same problem card.
+  if (algoCardId && targetUserCard[otherField] === algoCardId) {
+    updatePayload[otherField] = null;
   }
 
   await (await db.from('user_cards')).update(
-    { [field]: algoCardId },
-    { user_id: `eq.${userId}`, card_id: `eq.${problemCardId}` }
+    updatePayload,
+    { id: `eq.${targetUserCard.id}` }
   );
 
-  return c.json({ success: true, action: algoCardId ? 'equipped' : 'unequipped' });
+  return c.json({
+    success: true,
+    action: algoCardId ? 'equipped' : 'unequipped',
+    movedFromCards,
+    slot,
+  });
 });
 
 function readLinkedCard(cardsField: unknown): { catalog_type?: 'core' | 'extended' } | null {
