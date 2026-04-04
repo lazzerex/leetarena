@@ -57,20 +57,32 @@
     };
   }
 
-  function buildFallbackUser(authUser: any) {
-    const username =
-      authUser?.user_metadata?.user_name ??
-      authUser?.user_metadata?.full_name ??
-      authUser?.email?.split('@')[0] ??
-      'trainer';
+  async function clearLocalAuthState() {
+    hasAuthSession.set(false);
+    currentUser.set(null);
 
-    return {
-      id: authUser?.id,
-      username,
-      coins: 500,
-      rating: 1000,
-      createdAt: new Date().toISOString(),
-    };
+    const timeout = new Promise<{ error: null }>((resolve) => {
+      setTimeout(() => resolve({ error: null }), 2000);
+    });
+
+    try {
+      await Promise.race([supabase.auth.signOut({ scope: 'local' }), timeout]);
+    } catch {
+      // Keep local state cleared even if auth client sign-out fails.
+    }
+  }
+
+  async function verifySessionUser(session: any) {
+    const accessToken = session?.access_token;
+    if (!accessToken) return null;
+
+    try {
+      const { data, error } = await withTimeout(supabase.auth.getUser(accessToken), AUTH_TIMEOUT_MS);
+      if (error || !data?.user?.id) return null;
+      return data.user;
+    } catch {
+      return null;
+    }
   }
 
   async function hydrateUserProfile(authUser: any) {
@@ -124,22 +136,31 @@
     const token = ++authRequestToken;
     const authUser = session?.user;
 
-    hasAuthSession.set(Boolean(authUser));
-
     if (!authUser) {
+      hasAuthSession.set(false);
       currentUser.set(null);
       authHydrated.set(true);
       return;
     }
 
-    try {
-      const hydratedUser = await hydrateUserProfile(authUser);
+    const verifiedAuthUser = await verifySessionUser(session);
+    if (!verifiedAuthUser) {
       if (token === authRequestToken) {
+        await clearLocalAuthState();
+        authHydrated.set(true);
+      }
+      return;
+    }
+
+    try {
+      const hydratedUser = await hydrateUserProfile(verifiedAuthUser);
+      if (token === authRequestToken) {
+        hasAuthSession.set(true);
         currentUser.set(hydratedUser as any);
       }
     } catch {
       if (token === authRequestToken) {
-        currentUser.set(buildFallbackUser(authUser) as any);
+        await clearLocalAuthState();
       }
     } finally {
       if (token === authRequestToken) {
