@@ -56,61 +56,82 @@ const TargetedSyncSchema = z.object({
 
 syncRoutes.post('/trigger/:userId', async (c) => {
   const userId = c.req.param('userId');
-  const syncFlags = getSyncFeatureFlags(c.env);
+  let stage = 'init';
 
-  if (!syncFlags.syncEnabled) {
-    return c.json({ error: 'LeetCode sync is disabled by server configuration' }, 403);
-  }
-
-  const authUser = await getAuthenticatedUser(c);
-  if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
-  if (!isOwner(authUser, userId)) return c.json({ error: 'Forbidden' }, 403);
-
-  const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
-
-  const users = await (await db.from('users')).select('*', { id: `eq.${userId}` });
-  const user = Array.isArray(users) ? users[0] : null;
-
-  if (!user || !user.leetcode_username) {
-    return c.json({ error: 'No LeetCode username set' }, 400);
-  }
-
-  await ensureCoreCollectionInitialized(userId, db);
-
-  const state = await getSyncState(userId, db);
-  const now = Date.now();
-  const lastBatchAt = parseTimestamp(state?.last_batch_synced_at);
-  if (lastBatchAt !== null && now - lastBatchAt < BATCH_SYNC_COOLDOWN_MS) {
-    return c.json(
-      {
-        error: 'Batch sync cooldown active. Try again later.',
-        nextAt: new Date(lastBatchAt + BATCH_SYNC_COOLDOWN_MS).toISOString(),
-      },
-      429
-    );
-  }
-
-  const result = await performSync(userId, user.leetcode_username, db, syncFlags, {
-    submissionLimit: BATCH_SYNC_LIMIT,
-  });
-
-  let batchCheckpointUpdated = true;
   try {
-    await (await db.from('leetcode_sync')).upsert({
-      user_id: userId,
-      last_batch_synced_at: new Date().toISOString(),
+    stage = 'read-sync-flags';
+    const syncFlags = getSyncFeatureFlags(c.env);
+
+    if (!syncFlags.syncEnabled) {
+      return c.json({ error: 'LeetCode sync is disabled by server configuration' }, 403);
+    }
+
+    stage = 'authenticate-user';
+    const authUser = await getAuthenticatedUser(c);
+    if (!authUser) return c.json({ error: 'Unauthorized' }, 401);
+    if (!isOwner(authUser, userId)) return c.json({ error: 'Forbidden' }, 403);
+
+    stage = 'initialize-db-client';
+    const db = createSupabase(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+
+    stage = 'load-user-profile';
+    const users = await (await db.from('users')).select('*', { id: `eq.${userId}` });
+    const user = Array.isArray(users) ? users[0] : null;
+
+    if (!user || !user.leetcode_username) {
+      return c.json({ error: 'No LeetCode username set' }, 400);
+    }
+
+    stage = 'ensure-core-collection';
+    await ensureCoreCollectionInitialized(userId, db);
+
+    stage = 'load-sync-state';
+    const state = await getSyncState(userId, db);
+    const now = Date.now();
+    const lastBatchAt = parseTimestamp(state?.last_batch_synced_at);
+    if (lastBatchAt !== null && now - lastBatchAt < BATCH_SYNC_COOLDOWN_MS) {
+      return c.json(
+        {
+          error: 'Batch sync cooldown active. Try again later.',
+          nextAt: new Date(lastBatchAt + BATCH_SYNC_COOLDOWN_MS).toISOString(),
+        },
+        429
+      );
+    }
+
+    stage = 'perform-sync';
+    const result = await performSync(userId, user.leetcode_username, db, syncFlags, {
+      submissionLimit: BATCH_SYNC_LIMIT,
+    });
+
+    let batchCheckpointUpdated = true;
+    try {
+      stage = 'write-batch-checkpoint';
+      await (await db.from('leetcode_sync')).upsert({
+        user_id: userId,
+        last_batch_synced_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      batchCheckpointUpdated = false;
+      console.error('Failed to update batch sync checkpoint', { userId, error });
+    }
+
+    return c.json({
+      ...result,
+      mode: 'batch',
+      batchLimit: BATCH_SYNC_LIMIT,
+      batchCheckpointUpdated,
     });
   } catch (error) {
-    batchCheckpointUpdated = false;
-    console.error('Failed to update batch sync checkpoint', { userId, error });
+    console.error('Sync trigger failed', { userId, stage, error });
+    return c.json(
+      {
+        error: `${describeSyncError(error)} (stage: ${stage})`,
+        stage,
+      },
+      500
+    );
   }
-
-  return c.json({
-    ...result,
-    mode: 'batch',
-    batchLimit: BATCH_SYNC_LIMIT,
-    batchCheckpointUpdated,
-  });
 });
 
 syncRoutes.post('/targeted/:userId', async (c) => {
@@ -744,4 +765,16 @@ function readJoinedCard(cardsField: unknown): {
   }
 
   return null;
+}
+
+function describeSyncError(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return error;
+  }
+
+  return 'Sync request failed unexpectedly';
 }
