@@ -43,7 +43,7 @@ type SubmissionOutcome =
   | 'skipped_no_metadata';
 
 const CORE_DUPLICATES_TO_MASTERED = 20;
-const BATCH_SYNC_LIMIT = 50;
+const BATCH_SYNC_LIMIT = 20;
 const BATCH_SYNC_COOLDOWN_MS = 0;
 const TARGETED_CARD_COOLDOWN_MS = 0;
 const TARGETED_WINDOW_MS = 60 * 60 * 1000;
@@ -94,15 +94,22 @@ syncRoutes.post('/trigger/:userId', async (c) => {
     submissionLimit: BATCH_SYNC_LIMIT,
   });
 
-  await (await db.from('leetcode_sync')).upsert({
-    user_id: userId,
-    last_batch_synced_at: new Date().toISOString(),
-  });
+  let batchCheckpointUpdated = true;
+  try {
+    await (await db.from('leetcode_sync')).upsert({
+      user_id: userId,
+      last_batch_synced_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    batchCheckpointUpdated = false;
+    console.error('Failed to update batch sync checkpoint', { userId, error });
+  }
 
   return c.json({
     ...result,
     mode: 'batch',
     batchLimit: BATCH_SYNC_LIMIT,
+    batchCheckpointUpdated,
   });
 });
 
@@ -254,7 +261,10 @@ export async function performSync(
       uniqueNewSubsMap.set(normalizedSlug, submission);
     }
   }
-  const uniqueNewSubs = Array.from(uniqueNewSubsMap.values());
+  // Process in ascending order so partial runs can safely persist a monotonic checkpoint.
+  const uniqueNewSubs = Array.from(uniqueNewSubsMap.values()).sort(
+    (a, b) => parseInt(a.id, 10) - parseInt(b.id, 10)
+  );
 
   let synced = 0;
   let unlocked = 0;
@@ -262,36 +272,64 @@ export async function performSync(
   let skippedOutOfCatalog = 0;
   let skippedNoMetadata = 0;
   let promotedExtendedCards = 0;
+  let submissionErrors = 0;
+  let checkpointUpdated = true;
+  let gemsAwarded = 0;
+  let lastProcessedSubmissionId = lastSubmissionId;
 
   for (const submission of uniqueNewSubs) {
-    const outcome = await applySubmission({
-      userId,
-      submission,
-      db,
-      syncFlags,
-    });
+    try {
+      const outcome = await applySubmission({
+        userId,
+        submission,
+        db,
+        syncFlags,
+      });
 
-    if (outcome.outcome === 'unlocked') unlocked++;
-    if (outcome.outcome === 'upgraded') upgraded++;
-    if (outcome.outcome === 'skipped_out_of_catalog') skippedOutOfCatalog++;
-    if (outcome.outcome === 'skipped_no_metadata') skippedNoMetadata++;
-    promotedExtendedCards += outcome.promotedExtendedCards;
+      if (outcome.outcome === 'unlocked') unlocked++;
+      if (outcome.outcome === 'upgraded') upgraded++;
+      if (outcome.outcome === 'skipped_out_of_catalog') skippedOutOfCatalog++;
+      if (outcome.outcome === 'skipped_no_metadata') skippedNoMetadata++;
+      promotedExtendedCards += outcome.promotedExtendedCards;
 
-    if (outcome.outcome !== 'skipped_out_of_catalog' && outcome.outcome !== 'skipped_no_metadata') {
-      synced++;
+      if (outcome.outcome !== 'skipped_out_of_catalog' && outcome.outcome !== 'skipped_no_metadata') {
+        synced++;
+      }
+
+      lastProcessedSubmissionId = maxSubmissionId(lastProcessedSubmissionId, submission.id);
+    } catch (error) {
+      submissionErrors += 1;
+      console.error('Batch sync submission failed', {
+        userId,
+        titleSlug: submission.titleSlug,
+        submissionId: submission.id,
+        error,
+      });
     }
   }
 
-  const gemsAwarded = promotedExtendedCards * EXTENDED_GEMS_PER_PROMOTION;
+  gemsAwarded = promotedExtendedCards * EXTENDED_GEMS_PER_PROMOTION;
   if (gemsAwarded > 0) {
-    await addExtendedGems(userId, gemsAwarded, db);
+    try {
+      await addExtendedGems(userId, gemsAwarded, db);
+    } catch (error) {
+      submissionErrors += 1;
+      console.error('Failed to award extended gems after sync', { userId, gemsAwarded, error });
+      gemsAwarded = 0;
+    }
   }
 
-  await (await db.from('leetcode_sync')).upsert({
-    user_id: userId,
-    last_synced_at: new Date().toISOString(),
-    last_submission_id: maxSubmissionId(lastSubmissionId, submissions[0]?.id ?? lastSubmissionId),
-  });
+  try {
+    await (await db.from('leetcode_sync')).upsert({
+      user_id: userId,
+      last_synced_at: new Date().toISOString(),
+      last_submission_id: lastProcessedSubmissionId,
+    });
+  } catch (error) {
+    checkpointUpdated = false;
+    submissionErrors += 1;
+    console.error('Failed to update sync checkpoint', { userId, lastProcessedSubmissionId, error });
+  }
 
   return {
     synced,
@@ -304,6 +342,8 @@ export async function performSync(
     promotedExtendedCards,
     gemsAwarded,
     extendedCatalogEnabled: syncFlags.extendedCatalogEnabled,
+    submissionErrors,
+    checkpointUpdated,
   };
 }
 
