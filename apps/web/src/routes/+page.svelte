@@ -54,7 +54,7 @@
       </div>
 
       <h1 class="text-4xl sm:text-6xl font-bold leading-tight mb-4 text-shimmer">
-        Competitive card battles powered by coding problems.
+        Brute force won't save you here. May the strongest algorithm win.
       </h1>
       <p class="text-slate-300 max-w-2xl text-lg mb-8">
         LeetArena turns problem-solving progress into collectible cards, strategic deck building, and modern PvP gameplay.
