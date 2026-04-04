@@ -6,6 +6,12 @@ const API_TIMEOUT_MS = 12000;
 const SYNC_API_TIMEOUT_MS = 90000;
 const TARGETED_SYNC_TIMEOUT_MS = 45000;
 
+function joinApiUrl(baseUrl: string, path: string): string {
+  const normalizedBase = baseUrl.trim().replace(/\/+$/, '');
+  const normalizedPath = path.replace(/^\/+/, '');
+  return `${normalizedBase}/${normalizedPath}`;
+}
+
 async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = API_TIMEOUT_MS): Promise<T> {
   const {
     data: { session },
@@ -23,7 +29,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = 
 
   let res: Response;
   try {
-    res = await fetch(`${PUBLIC_API_URL}${path}`, {
+    res = await fetch(joinApiUrl(PUBLIC_API_URL, path), {
       ...options,
       headers,
       credentials: 'include',
@@ -60,6 +66,9 @@ export const api = {
       skippedNoMetadata: number;
       gemsAwarded: number;
       extendedCatalogEnabled: boolean;
+      submissionErrors?: number;
+      checkpointUpdated?: boolean;
+      batchCheckpointUpdated?: boolean;
     }>(`/sync/trigger/${userId}`, { method: 'POST' }, SYNC_API_TIMEOUT_MS),
   targetedSync: (userId: string, titleSlug: string) =>
     apiFetch<{
