@@ -196,9 +196,14 @@ packRoutes.post('/open', async (c) => {
 
   const algorithmRewards = await drawAlgorithmRewards(userId, packType as PackType, db);
 
-  // Deduct coins and compensate algorithm duplicates in one update.
-  const finalCoins = user.coins - costAmount + algorithmRewards.duplicateCompensationCoins;
-  if (costAmount > 0 || algorithmRewards.duplicateCompensationCoins > 0) {
+  // Duplicate compensation offsets pack spend but must never create net coin gain on free packs.
+  const appliedDuplicateCompensationCoins = Math.min(
+    algorithmRewards.duplicateCompensationCoins,
+    costAmount
+  );
+
+  const finalCoins = user.coins - costAmount + appliedDuplicateCompensationCoins;
+  if (finalCoins !== user.coins) {
     await (await db.from('users')).update(
       { coins: finalCoins },
       { id: `eq.${userId}` }
@@ -255,7 +260,7 @@ packRoutes.post('/open', async (c) => {
     rarities,
     rolledRarities,
     coinsSpent: costAmount,
-    duplicateCompensationCoins: algorithmRewards.duplicateCompensationCoins,
+    duplicateCompensationCoins: appliedDuplicateCompensationCoins,
     usedExtendedPool: useExtendedPool,
   });
 });
