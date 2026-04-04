@@ -43,7 +43,7 @@ type SubmissionOutcome =
   | 'skipped_no_metadata';
 
 const CORE_DUPLICATES_TO_MASTERED = 20;
-const BATCH_SYNC_LIMIT = 20;
+const BATCH_SYNC_LIMIT = 50;
 const BATCH_SYNC_COOLDOWN_MS = 0;
 const TARGETED_CARD_COOLDOWN_MS = 0;
 const TARGETED_WINDOW_MS = 60 * 60 * 1000;
