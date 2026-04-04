@@ -44,7 +44,8 @@ type SubmissionOutcome =
 
 const CORE_DUPLICATES_TO_MASTERED = 20;
 const BATCH_SYNC_LIMIT = 50;
-const BATCH_SYNC_COOLDOWN_MS = 0;
+const DEFAULT_BATCH_SYNC_COOLDOWN_MS = 0;
+const EXTENDED_BATCH_SYNC_COOLDOWN_MS = 60 * 60 * 1000;
 const TARGETED_CARD_COOLDOWN_MS = 0;
 const TARGETED_WINDOW_MS = 60 * 60 * 1000;
 const TARGETED_MAX_PER_WINDOW = Number.MAX_SAFE_INTEGER;
@@ -89,11 +90,14 @@ syncRoutes.post('/trigger/:userId', async (c) => {
     const state = await getSyncState(userId, db);
     const now = Date.now();
     const lastBatchAt = parseTimestamp(state?.last_batch_synced_at);
-    if (lastBatchAt !== null && now - lastBatchAt < BATCH_SYNC_COOLDOWN_MS) {
+    const batchCooldownMs = getBatchSyncCooldownMs(syncFlags);
+    if (lastBatchAt !== null && now - lastBatchAt < batchCooldownMs) {
       return c.json(
         {
-          error: 'Batch sync cooldown active. Try again later.',
-          nextAt: new Date(lastBatchAt + BATCH_SYNC_COOLDOWN_MS).toISOString(),
+          error: syncFlags.extendedCatalogEnabled
+            ? 'Extended sync cooldown active. Try again in 1 hour.'
+            : 'Batch sync cooldown active. Try again later.',
+          nextAt: new Date(lastBatchAt + batchCooldownMs).toISOString(),
         },
         429
       );
@@ -777,4 +781,12 @@ function describeSyncError(error: unknown): string {
   }
 
   return 'Sync request failed unexpectedly';
+}
+
+function getBatchSyncCooldownMs(syncFlags: SyncFeatureFlags): number {
+  if (syncFlags.extendedCatalogEnabled) {
+    return EXTENDED_BATCH_SYNC_COOLDOWN_MS;
+  }
+
+  return DEFAULT_BATCH_SYNC_COOLDOWN_MS;
 }
