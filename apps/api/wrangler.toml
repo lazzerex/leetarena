@@ -12,9 +12,6 @@ compatibility_flags = ["nodejs_compat"]
 # QSTASH_TOKEN
 # RESEND_API_KEY
 
-[[routes]]
-pattern = "api.leetarena.dev/*"
-zone_name = "leetarena.dev"
 
 [triggers]
 crons = ["0 0 * * *", "30 0 * * *"]
