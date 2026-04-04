@@ -37,6 +37,9 @@
     skippedOutOfCatalog: number;
     skippedNoMetadata: number;
     extendedCatalogEnabled: boolean;
+    submissionErrors?: number;
+    checkpointUpdated?: boolean;
+    batchCheckpointUpdated?: boolean;
   } | null = null;
   let stats = { wins: 0, battles: 0, collection: 0, mastered: 0 };
 
@@ -131,7 +134,17 @@
     try {
       syncResult = await api.triggerSync($currentUser.id);
       lastSynced = new Date().toISOString();
-      if (syncResult.newSubmissions === 0) {
+      const hasWarnings =
+        (syncResult.submissionErrors ?? 0) > 0 ||
+        syncResult.checkpointUpdated === false ||
+        syncResult.batchCheckpointUpdated === false;
+
+      if (hasWarnings) {
+        notify(
+          'info',
+          `Sync completed with warnings. Processed ${syncResult.synced} solve${syncResult.synced !== 1 ? 's' : ''}; please run sync again if you still have unsynced solves.`
+        );
+      } else if (syncResult.newSubmissions === 0) {
         notify('info', 'No new accepted LeetCode submissions found since your last sync checkpoint.');
       } else {
         notify('success', `Sync complete: ${syncResult.synced} solve${syncResult.synced !== 1 ? 's' : ''} processed.`);
