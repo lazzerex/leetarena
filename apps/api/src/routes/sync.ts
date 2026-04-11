@@ -55,11 +55,23 @@ const TargetedSyncSchema = z.object({
   titleSlug: z.string().trim().min(1),
 });
 
+const TriggerSyncSchema = z.object({
+  resetCheckpoint: z.boolean().optional(),
+});
+
 syncRoutes.post('/trigger/:userId', async (c) => {
   const userId = c.req.param('userId');
   let stage = 'init';
+  let checkpointResetApplied = false;
 
   try {
+    stage = 'parse-trigger-body';
+    const rawBody = await c.req.json().catch(() => ({}));
+    const parsedBody = TriggerSyncSchema.safeParse(rawBody);
+    const resetCheckpointRequested = parsedBody.success
+      ? parsedBody.data.resetCheckpoint === true
+      : false;
+
     stage = 'read-sync-flags';
     const syncFlags = getSyncFeatureFlags(c.env);
 
@@ -85,6 +97,20 @@ syncRoutes.post('/trigger/:userId', async (c) => {
 
     stage = 'ensure-core-collection';
     await ensureCoreCollectionInitialized(userId, db);
+
+    if (resetCheckpointRequested) {
+      stage = 'reset-sync-checkpoint';
+      await (await db.from('leetcode_sync')).upsert({
+        user_id: userId,
+        last_submission_id: '0',
+        last_synced_at: null,
+        last_batch_synced_at: null,
+        targeted_window_started_at: null,
+        targeted_sync_count: 0,
+        targeted_last_by_slug: {},
+      });
+      checkpointResetApplied = true;
+    }
 
     stage = 'load-sync-state';
     const state = await getSyncState(userId, db);
@@ -125,6 +151,7 @@ syncRoutes.post('/trigger/:userId', async (c) => {
       mode: 'batch',
       batchLimit: BATCH_SYNC_LIMIT,
       batchCheckpointUpdated,
+      checkpointResetApplied,
     });
   } catch (error) {
     console.error('Sync trigger failed', { userId, stage, error });
@@ -251,6 +278,9 @@ export async function performSync(
       synced: 0,
       newSubmissions: 0,
       uniqueProblems: 0,
+      fetchedAcceptedSubmissions: 0,
+      duplicateProblemSubmissions: 0,
+      unchangedProblems: 0,
       unlocked: 0,
       upgraded: 0,
       skippedOutOfCatalog: 0,
@@ -290,6 +320,7 @@ export async function performSync(
   const uniqueNewSubs = Array.from(uniqueNewSubsMap.values()).sort(
     (a, b) => parseInt(a.id, 10) - parseInt(b.id, 10)
   );
+  const duplicateProblemSubmissions = Math.max(0, newSubs.length - uniqueNewSubs.length);
 
   let synced = 0;
   let unlocked = 0;
@@ -356,10 +387,15 @@ export async function performSync(
     console.error('Failed to update sync checkpoint', { userId, lastProcessedSubmissionId, error });
   }
 
+  const unchangedProblems = Math.max(0, synced - unlocked - upgraded);
+
   return {
     synced,
+    fetchedAcceptedSubmissions: submissions.length,
     newSubmissions: newSubs.length,
     uniqueProblems: uniqueNewSubs.length,
+    duplicateProblemSubmissions,
+    unchangedProblems,
     unlocked,
     upgraded,
     skippedOutOfCatalog,
