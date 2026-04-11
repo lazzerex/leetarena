@@ -18,6 +18,7 @@
   let syncing = false;
   let targetedSyncing = false;
   let lastSynced: string | null = null;
+  let pendingSyncCheckpointReset = false;
   let targetedTitleSlug = '';
   let targetedResult: {
     status: 'unlocked' | 'upgraded' | 'already_unlocked' | 'out_of_catalog' | 'no_metadata' | 'not_found';
@@ -30,8 +31,11 @@
   } | null = null;
   let syncResult: {
     synced: number;
+    fetchedAcceptedSubmissions: number;
     newSubmissions: number;
     uniqueProblems: number;
+    duplicateProblemSubmissions: number;
+    unchangedProblems: number;
     unlocked: number;
     upgraded: number;
     skippedOutOfCatalog: number;
@@ -40,6 +44,7 @@
     submissionErrors?: number;
     checkpointUpdated?: boolean;
     batchCheckpointUpdated?: boolean;
+    checkpointResetApplied?: boolean;
   } | null = null;
   let stats = { wins: 0, battles: 0, collection: 0, mastered: 0 };
 
@@ -118,9 +123,29 @@
         notify('error', 'LeetCode username not found');
         return;
       }
-      await supabase.from('users').update({ leetcode_username: leetcodeUsername }).eq('id', $currentUser.id);
-      currentUser.update((u) => u ? { ...u, leetcodeUsername, leetcode_username: leetcodeUsername } as any : u);
-      notify('success', `Connected to @${leetcodeUsername} on LeetCode!`);
+
+      const verifiedUsername = (result.username ?? leetcodeUsername).trim();
+      const previousUsername = connectedLeetCodeUsername.trim().toLowerCase();
+      const nextUsername = verifiedUsername.toLowerCase();
+      const usernameChanged = previousUsername !== nextUsername;
+
+      await supabase.from('users').update({ leetcode_username: verifiedUsername }).eq('id', $currentUser.id);
+      currentUser.update((u) => u ? { ...u, leetcodeUsername: verifiedUsername, leetcode_username: verifiedUsername } as any : u);
+      leetcodeUsername = verifiedUsername;
+
+      if (usernameChanged) {
+        pendingSyncCheckpointReset = true;
+        lastSynced = null;
+        syncResult = null;
+        targetedResult = null;
+      } else {
+        pendingSyncCheckpointReset = false;
+      }
+
+      notify('success', usernameChanged
+        ? `Connected to @${verifiedUsername} on LeetCode. Next sync will reset the checkpoint for this account.`
+        : `Connected to @${verifiedUsername} on LeetCode!`
+      );
     } catch (e: any) {
       notify('error', e.message);
     } finally {
@@ -132,8 +157,11 @@
     if (!$currentUser) return;
     syncing = true;
     try {
-      syncResult = await api.triggerSync($currentUser.id);
+      syncResult = await api.triggerSync($currentUser.id, {
+        resetCheckpoint: pendingSyncCheckpointReset,
+      });
       lastSynced = new Date().toISOString();
+      pendingSyncCheckpointReset = false;
       const hasWarnings =
         (syncResult.submissionErrors ?? 0) > 0 ||
         syncResult.checkpointUpdated === false ||
@@ -146,8 +174,16 @@
         );
       } else if (syncResult.newSubmissions === 0) {
         notify('info', 'No new accepted LeetCode submissions found since your last sync checkpoint.');
+      } else if (syncResult.unlocked + syncResult.upgraded === 0) {
+        notify(
+          'info',
+          `Sync complete: ${syncResult.newSubmissions} new accepted submission${syncResult.newSubmissions !== 1 ? 's' : ''} checked, but no card changes were needed.`
+        );
       } else {
-        notify('success', `Sync complete: ${syncResult.synced} solve${syncResult.synced !== 1 ? 's' : ''} processed.`);
+        notify(
+          'success',
+          `Sync complete: ${syncResult.unlocked} unlock${syncResult.unlocked !== 1 ? 's' : ''}, ${syncResult.upgraded} upgrade${syncResult.upgraded !== 1 ? 's' : ''}.`
+        );
       }
     } catch (e: any) {
       notify('error', e.message ?? 'Sync failed');
@@ -258,12 +294,24 @@
         </button>
       </div>
 
+      {#if pendingSyncCheckpointReset}
+        <p class="mt-2 text-xs text-amber-300">
+          Next sync will reset your checkpoint because you changed the connected LeetCode username.
+        </p>
+      {/if}
+
       {#if syncResult}
         <div class="mt-3 text-green-400 text-sm font-medium">
-          <span class="inline-flex items-center gap-1.5"><CircleCheckBig size={14} /> Synced {syncResult.synced} submission{syncResult.synced !== 1 ? 's' : ''}</span>
+          <span class="inline-flex items-center gap-1.5"><CircleCheckBig size={14} /> Processed {syncResult.uniqueProblems} unique problem{syncResult.uniqueProblems !== 1 ? 's' : ''}</span>
         </div>
         <div class="mt-2 text-xs text-gray-400 space-y-1">
-          <p>New accepted submissions: {syncResult.newSubmissions} · Unique problems processed: {syncResult.uniqueProblems}</p>
+          <p>Recent accepted fetched: {syncResult.fetchedAcceptedSubmissions} · New since checkpoint: {syncResult.newSubmissions}</p>
+          {#if syncResult.duplicateProblemSubmissions > 0}
+            <p>Duplicate accepted submissions on same problem collapsed: {syncResult.duplicateProblemSubmissions}</p>
+          {/if}
+          {#if syncResult.unchangedProblems > 0}
+            <p>No card change needed after processing: {syncResult.unchangedProblems}</p>
+          {/if}
           <p>Unlocked: {syncResult.unlocked} · Upgraded: {syncResult.upgraded}</p>
           <p>
             Non-core submissions skipped: {syncResult.skippedOutOfCatalog} · Missing metadata: {syncResult.skippedNoMetadata}
@@ -274,6 +322,7 @@
 
       <p class="text-xs text-gray-600 mt-3">
         Sync is optional and only runs for users who connect and verify their LeetCode username.
+        Batch sync reads your recent accepted-submission window and counts one result per problem slug to avoid duplicate processing.
         Solving non-core problems only unlocks extended catalog cards when the server enables variety mode.
       </p>
 
