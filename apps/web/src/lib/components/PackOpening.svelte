@@ -13,7 +13,7 @@
   import Swords from 'lucide-svelte/icons/swords';
   import Check from 'lucide-svelte/icons/check';
 
-  let revealIndex = -1;
+  let revealedItemKeys = new Set<string>();
   let allRevealed = false;
   let revealSessionSignature = '';
   let revealItems: RevealItem[] = [];
@@ -33,6 +33,10 @@
   const EXTENDED_PROBLEM_BACK_ASSET = '/assets/extended-card/back.png';
   const ALGORITHM_BACK_ASSET = '/assets/algo-fantasy/back.png';
 
+  function getRevealKey(item: RevealItem): string {
+    return `${item.type}-${item.id}`;
+  }
+
   function getRevealBackTheme(item: RevealItem): 'core' | 'extended' | 'algorithm' {
     if (item.type === 'algorithm') return 'algorithm';
     return item.card.catalogType === 'extended' ? 'extended' : 'core';
@@ -45,37 +49,39 @@
     return CORE_PROBLEM_BACK_ASSET;
   }
 
-  $: revealItemsSignature = revealItems.map((item) => `${item.type}-${item.id}`).join('|');
+  $: revealItemsSignature = revealItems.map((item) => getRevealKey(item)).join('|');
+  $: revealedCount = revealedItemKeys.size;
+  $: allRevealed = revealItems.length > 0 && revealedCount >= revealItems.length;
 
   $: if ($packRevealOpen && revealItemsSignature && revealItemsSignature !== revealSessionSignature) {
     revealSessionSignature = revealItemsSignature;
-    revealIndex = -1;
-    allRevealed = false;
+    revealedItemKeys = new Set<string>();
   }
 
   $: if (!$packRevealOpen) {
     revealSessionSignature = '';
+    revealedItemKeys = new Set<string>();
   }
 
   $: newCards = revealItems.filter((item) => item.isNew);
 
+  function revealByKey(revealKey: string) {
+    if (revealedItemKeys.has(revealKey)) return;
+    const next = new Set(revealedItemKeys);
+    next.add(revealKey);
+    revealedItemKeys = next;
+  }
+
   function revealNext() {
-    if (revealItems.length === 0) return;
-
-    if (revealIndex < revealItems.length - 1) {
-      revealIndex += 1;
-      if (revealIndex >= revealItems.length - 1) {
-        allRevealed = true;
-      }
-      return;
-    }
-
-    allRevealed = true;
+    const nextItem = revealItems.find((item) => !revealedItemKeys.has(getRevealKey(item)));
+    if (!nextItem) return;
+    revealByKey(getRevealKey(nextItem));
   }
 
   function revealFromSlot(index: number) {
-    if (index <= revealIndex) return;
-    revealNext();
+    const item = revealItems[index];
+    if (!item) return;
+    revealByKey(getRevealKey(item));
   }
 
   function onSceneKeydown(event: KeyboardEvent, index: number) {
@@ -85,16 +91,14 @@
   }
 
   function revealAll() {
-    revealIndex = revealItems.length - 1;
-    allRevealed = true;
+    revealedItemKeys = new Set(revealItems.map((item) => getRevealKey(item)));
   }
 
   function close() {
     packRevealOpen.set(false);
     packRevealCards.set([]);
     packRevealAlgorithmCards.set([]);
-    revealIndex = -1;
-    allRevealed = false;
+    revealedItemKeys = new Set<string>();
   }
 </script>
 
@@ -114,8 +118,8 @@
       <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1">
         <div class="pack-grid">
           {#each revealItems as item, i (`${item.type}-${item.id}`)}
-            {@const revealed = i <= revealIndex}
-            {@const canReveal = i === revealIndex + 1}
+            {@const revealKey = getRevealKey(item)}
+            {@const revealed = revealedItemKeys.has(revealKey)}
             {@const backTheme = getRevealBackTheme(item)}
             {@const backAsset = getRevealBackAsset(item)}
             <div animate:flip={{ duration: 260 }} class="reveal-item text-center">
@@ -156,8 +160,7 @@
                   <div class="reveal-face reveal-back-face">
                     <div
                       class="reveal-back-card w-36 h-52 rounded-xl border-2 border-slate-500/80 flex items-center justify-center transition-all duration-200"
-                      class:back-clickable={canReveal}
-                      class:back-locked={!canReveal}
+                      class:back-clickable={!revealed}
                       class:back-core={backTheme === 'core'}
                       class:back-extended={backTheme === 'extended'}
                       class:back-algorithm={backTheme === 'algorithm'}
@@ -166,9 +169,7 @@
                       <div class="reveal-back-overlay absolute inset-0"></div>
                       <div class="text-center relative z-10">
                         <div class="text-3xl mb-1 inline-flex"><Swords size={24} /></div>
-                        <div class="text-cyan-100/85 text-xs tracking-wide">
-                          {#if canReveal}Tap to reveal{:else}Queued{/if}
-                        </div>
+                        <div class="text-cyan-100/85 text-xs tracking-wide">Tap to reveal</div>
                       </div>
                     </div>
                   </div>
@@ -183,10 +184,10 @@
                 <button
                   type="button"
                   class="reveal-hit-target absolute inset-0 z-30"
-                  class:hit-target-active={canReveal && !revealed}
+                  class:hit-target-active={!revealed}
                   aria-label={`Reveal card ${i + 1}`}
-                  aria-disabled={!canReveal || revealed}
-                  tabindex={canReveal && !revealed ? 0 : -1}
+                  aria-disabled={revealed}
+                  tabindex={!revealed ? 0 : -1}
                   on:pointerup|stopPropagation={() => revealFromSlot(i)}
                   on:click|stopPropagation={() => revealFromSlot(i)}
                   on:keydown|stopPropagation={(event) => onSceneKeydown(event, i)}
@@ -370,11 +371,6 @@
     cursor: pointer;
     border-color: rgba(103, 232, 249, 0.8);
     animation: revealPulse 1.5s ease-in-out infinite;
-  }
-
-  .back-locked {
-    opacity: 0.72;
-    filter: grayscale(0.2);
   }
 
   .reveal-back-card:hover.back-clickable {
