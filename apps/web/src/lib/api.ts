@@ -55,11 +55,14 @@ export const api = {
   // Sync
   verifyLeetCode: (username: string) =>
     apiFetch<{ valid: boolean; username?: string }>(`/sync/verify/${username}`),
-  triggerSync: (userId: string) =>
+  triggerSync: (userId: string, options?: { resetCheckpoint?: boolean }) =>
     apiFetch<{
       synced: number;
+      fetchedAcceptedSubmissions: number;
       newSubmissions: number;
       uniqueProblems: number;
+      duplicateProblemSubmissions: number;
+      unchangedProblems: number;
       unlocked: number;
       upgraded: number;
       skippedOutOfCatalog: number;
@@ -69,7 +72,11 @@ export const api = {
       submissionErrors?: number;
       checkpointUpdated?: boolean;
       batchCheckpointUpdated?: boolean;
-    }>(`/sync/trigger/${userId}`, { method: 'POST' }, SYNC_API_TIMEOUT_MS),
+      checkpointResetApplied?: boolean;
+    }>(`/sync/trigger/${userId}`, {
+      method: 'POST',
+      body: JSON.stringify({ resetCheckpoint: options?.resetCheckpoint === true }),
+    }, SYNC_API_TIMEOUT_MS),
   targetedSync: (userId: string, titleSlug: string) =>
     apiFetch<{
       status: 'unlocked' | 'upgraded' | 'already_unlocked' | 'out_of_catalog' | 'no_metadata' | 'not_found';
