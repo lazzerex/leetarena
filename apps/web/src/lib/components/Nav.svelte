@@ -4,43 +4,28 @@
   import { authHydrated, currentUser, hasAuthSession } from '$lib/stores';
   import { notify } from '$lib/stores';
   import { supabase } from '$lib/supabase';
-  import Home from 'lucide-svelte/icons/home';
   import Package from 'lucide-svelte/icons/package';
   import Layers3 from 'lucide-svelte/icons/layers-3';
   import Blocks from 'lucide-svelte/icons/blocks';
   import Swords from 'lucide-svelte/icons/swords';
   import Trophy from 'lucide-svelte/icons/trophy';
-  import Coins from 'lucide-svelte/icons/coins';
   import LogOut from 'lucide-svelte/icons/log-out';
   import UserRound from 'lucide-svelte/icons/user-round';
-  import Sparkles from 'lucide-svelte/icons/sparkles';
+  import Zap from 'lucide-svelte/icons/zap';
 
   const navItems = [
-    { href: '/', label: 'Home', icon: Home },
-    { href: '/packs', label: 'Packs', icon: Package },
-    { href: '/collection', label: 'Collection', icon: Layers3 },
+    { href: '/packs',        label: 'Packs',       icon: Package },
+    { href: '/collection',   label: 'Collection',  icon: Layers3 },
     { href: '/deck-builder', label: 'Deck Builder', icon: Blocks },
-    { href: '/battle', label: 'Battle', icon: Swords },
-    { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
+    { href: '/battle',       label: 'Battle',      icon: Swords },
+    { href: '/leaderboard',  label: 'Leaderboard', icon: Trophy },
   ];
 
   let signingOut = false;
 
-  function isNavActive(href: string, pathname: string): boolean {
+  function isActive(href: string, pathname: string): boolean {
     if (href === '/') return pathname === '/';
     return pathname === href || pathname.startsWith(`${href}/`);
-  }
-
-  async function tryLocalSignOutWithTimeout(ms = 2500) {
-    const timeout = new Promise<{ error: null }>((resolve) => {
-      setTimeout(() => resolve({ error: null }), ms);
-    });
-
-    try {
-      await Promise.race([supabase.auth.signOut({ scope: 'local' }), timeout]);
-    } catch {
-      // We still clear local UI state and redirect even if provider revoke fails.
-    }
   }
 
   async function signOut() {
@@ -49,7 +34,8 @@
     try {
       hasAuthSession.set(false);
       currentUser.set(null);
-      await tryLocalSignOutWithTimeout();
+      const timeout = new Promise<void>((r) => setTimeout(r, 2500));
+      await Promise.race([supabase.auth.signOut({ scope: 'local' }), timeout]);
       await goto('/login', { replaceState: true });
       notify('success', 'Signed out');
     } finally {
@@ -58,89 +44,296 @@
   }
 </script>
 
-<nav class="glass-panel sticky top-0 z-40 border-b border-white/10">
-  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+<nav class="nav-bar sticky top-0 z-40">
+  <!-- Subtle top accent line -->
+  <div class="nav-top-line" aria-hidden="true"></div>
+
+  <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
+
     <!-- Logo -->
-    <a href="/" class="group flex items-center gap-2 font-black text-xl tracking-tight">
-      <span class="w-8 h-8 rounded-lg bg-sky-400/15 text-sky-300 border border-sky-300/30 flex items-center justify-center transition-all duration-300 group-hover:-translate-y-0.5 group-hover:scale-105">
-        <Sparkles size={16} />
+    <a href="/" class="logo group flex-shrink-0">
+      <span class="logo-icon">
+        <Zap size={14} strokeWidth={2.5} />
       </span>
-      <span class="text-white transition-colors duration-300 group-hover:text-sky-100">Leet<span class="text-sky-300">Arena</span></span>
+      <span class="logo-text font-cinzel">
+        Leet<span class="logo-accent">Arena</span>
+      </span>
     </a>
 
-    <!-- Nav links -->
-    <div class="hidden md:flex items-center gap-1">
+    <!-- Nav links (scrollable on mobile) -->
+    <div class="nav-links flex items-center gap-0.5 flex-1 justify-center overflow-x-auto hide-scrollbar">
       {#each navItems as item}
-        <a
-          href={item.href}
-          class="group px-3 py-2 rounded-lg text-sm font-medium transition-all duration-300 inline-flex items-center gap-2
-                 {isNavActive(item.href, $page.url.pathname)
-                   ? 'bg-sky-400/20 text-sky-200 border border-sky-300/25'
-                   : 'text-slate-300 hover:text-white hover:bg-white/5 hover:-translate-y-0.5 hover:border-white/20 border border-transparent'}"
-        >
-          <span class="transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-3">
-            <svelte:component this={item.icon} size={14} />
+        {@const active = isActive(item.href, $page.url.pathname)}
+        <a href={item.href} class="nav-item flex-shrink-0" class:active>
+          <span class="nav-icon">
+            <svelte:component this={item.icon} size={13} strokeWidth={active ? 2.5 : 2} />
           </span>
-          {item.label}
+          <span>{item.label}</span>
         </a>
       {/each}
     </div>
 
-    <!-- User section -->
-    <div class="flex items-center gap-3">
+    <!-- Right: user / sign-in -->
+    <div class="flex items-center gap-2 flex-shrink-0">
       {#if !$authHydrated}
-        <div class="h-8 w-28 rounded-lg bg-gray-800/70 border border-gray-700/80"></div>
+        <div class="skeleton w-24 h-7 rounded-lg"></div>
+
       {:else if $hasAuthSession}
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-3">
           {#if $currentUser}
-            <span class="text-sky-200 text-sm font-bold inline-flex items-center gap-1.5">
-              <Coins size={14} /> {$currentUser.coins.toLocaleString()}
-            </span>
-            <span class="text-gray-400 text-sm hidden sm:inline">
+            <!-- Coin gem display -->
+            <div class="coin-chip" title="Coins">
+              <span class="coin-icon">◈</span>
+              <span class="coin-value font-rajdhani">{$currentUser.coins.toLocaleString()}</span>
+            </div>
+            <!-- Rating -->
+            <span class="rating-chip font-rajdhani" title="Battle Rating">
               #{$currentUser.rating}
             </span>
-            <a href="/profile" class="text-sm text-gray-300 hover:text-white transition-colors inline-flex items-center gap-1.5">
-              <UserRound size={14} />
-              {$currentUser.username}
-            </a>
-          {:else}
-            <a href="/profile" class="text-sm text-gray-300 hover:text-white transition-colors inline-flex items-center gap-1.5">
-              <UserRound size={14} />
-              Account
-            </a>
           {/if}
+
+          <!-- Profile link -->
+          <a href="/profile" class="profile-btn">
+            <UserRound size={13} />
+            <span class="hidden sm:inline">{$currentUser?.username ?? 'Account'}</span>
+          </a>
+
+          <!-- Sign out -->
           <button
             type="button"
             on:click={signOut}
             disabled={signingOut}
-            class="text-xs text-gray-500 hover:text-red-300 transition-colors px-2 py-1 rounded inline-flex items-center gap-1"
+            class="signout-btn"
+            title="Sign out"
           >
-            <LogOut size={12} />
-            Sign out
+            <LogOut size={13} />
           </button>
         </div>
+
       {:else}
-        <a
-          href="/login"
-          class="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 hover:-translate-y-0.5 text-black font-bold rounded-lg text-sm transition-all duration-300"
-        >
-          Sign in
+        <a href="/login" class="signin-btn btn-primary rounded-xl px-4 py-1.5 text-sm">
+          Sign In
         </a>
       {/if}
     </div>
   </div>
 
-  <!-- Mobile nav -->
-  <div class="md:hidden flex border-t border-gray-800 overflow-x-auto">
-    {#each navItems as item}
-      <a
-        href={item.href}
-        class="flex-1 flex flex-col items-center py-2 text-xs font-medium min-w-[3.5rem] transition-all duration-300
-               {isNavActive(item.href, $page.url.pathname) ? 'text-sky-300 bg-sky-400/5' : 'text-gray-500 hover:text-sky-200'}"
-      >
-        <svelte:component this={item.icon} size={16} />
-        <span class="mt-0.5">{item.label}</span>
-      </a>
-    {/each}
-  </div>
 </nav>
+
+<style>
+  /* ── Nav shell ───────────────────────────────────────────────── */
+
+  .nav-bar {
+    background: rgba(4, 6, 15, 0.88);
+    border-bottom: 1px solid rgba(124, 58, 237, 0.18);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .nav-top-line {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(124, 58, 237, 0.6) 30%,
+      rgba(245, 158, 11, 0.5) 60%,
+      transparent 100%
+    );
+  }
+
+  /* ── Logo ────────────────────────────────────────────────────── */
+
+  .logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    transition: opacity 200ms ease;
+  }
+
+  .logo:hover { opacity: 0.85; }
+
+  .logo-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, rgba(124,58,237,0.8) 0%, rgba(109,40,217,0.9) 100%);
+    border: 1px solid rgba(167, 139, 250, 0.4);
+    box-shadow: 0 0 12px -2px rgba(124,58,237,0.6), inset 0 1px 0 rgba(255,255,255,0.12);
+    color: #e9d5ff;
+    flex-shrink: 0;
+    transition: box-shadow 280ms ease;
+  }
+
+  .logo:hover .logo-icon {
+    box-shadow: 0 0 20px -1px rgba(124,58,237,0.8), inset 0 1px 0 rgba(255,255,255,0.15);
+  }
+
+  .logo-text {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #e6ecff;
+  }
+
+  .logo-accent {
+    color: #a78bfa;
+  }
+
+  /* ── Nav items ───────────────────────────────────────────────── */
+
+  .nav-item {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.38rem 0.7rem;
+    border-radius: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: rgba(154, 165, 196, 0.85);
+    text-decoration: none;
+    border: 1px solid transparent;
+    transition: color 200ms ease, background-color 200ms ease, border-color 200ms ease;
+    white-space: nowrap;
+  }
+
+  .nav-item::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 25%;
+    right: 25%;
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #a78bfa, #c4b5fd);
+    box-shadow: 0 0 6px 1px rgba(167,139,250,0.6);
+    transform: scaleX(0);
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .nav-icon {
+    opacity: 0.7;
+    transition: opacity 200ms ease, transform 200ms ease;
+  }
+
+  .nav-item:hover {
+    color: #e6ecff;
+    background: rgba(124, 58, 237, 0.08);
+    border-color: rgba(124, 58, 237, 0.15);
+  }
+
+  .nav-item:hover .nav-icon { opacity: 1; transform: scale(1.1); }
+
+  .nav-item.active {
+    color: #c4b5fd;
+    background: rgba(124, 58, 237, 0.13);
+    border-color: rgba(124, 58, 237, 0.22);
+  }
+
+  .nav-item.active .nav-icon { opacity: 1; }
+  .nav-item.active::after { transform: scaleX(1); }
+
+  /* ── User chips ──────────────────────────────────────────────── */
+
+  .coin-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #fcd34d;
+  }
+
+  .coin-icon {
+    font-size: 0.75rem;
+    color: #f59e0b;
+    line-height: 1;
+  }
+
+  .coin-value { letter-spacing: 0.02em; }
+
+  .rating-chip {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: rgba(154, 165, 196, 0.7);
+    letter-spacing: 0.02em;
+  }
+
+  .profile-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.65rem;
+    border-radius: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: rgba(230, 236, 255, 0.8);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    text-decoration: none;
+    transition: color 200ms ease, background-color 200ms ease, border-color 200ms ease;
+  }
+
+  .profile-btn:hover {
+    color: #e6ecff;
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.16);
+  }
+
+  .signout-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 0.5rem;
+    color: rgba(107, 122, 158, 0.7);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: color 200ms ease, background-color 200ms ease, border-color 200ms ease;
+  }
+
+  .signout-btn:hover {
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.2);
+  }
+
+  .signout-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Skeleton placeholder ────────────────────────────────────── */
+
+  .skeleton {
+    background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0%   { background-position: -200% 0; }
+    100% { background-position:  200% 0; }
+  }
+
+  /* ── Mobile nav scroll ───────────────────────────────────────── */
+
+  .nav-links {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .nav-links::-webkit-scrollbar { display: none; }
+</style>
