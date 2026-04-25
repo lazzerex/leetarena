@@ -35,14 +35,8 @@
     return new Promise<T>((resolve, reject) => {
       const id = setTimeout(() => reject(new Error('Auth request timed out')), timeoutMs);
       Promise.resolve(promiseLike)
-        .then((result) => {
-          clearTimeout(id);
-          resolve(result);
-        })
-        .catch((error) => {
-          clearTimeout(id);
-          reject(error);
-        });
+        .then((result) => { clearTimeout(id); resolve(result); })
+        .catch((error) => { clearTimeout(id); reject(error); });
     });
   }
 
@@ -60,29 +54,22 @@
   async function clearLocalAuthState() {
     hasAuthSession.set(false);
     currentUser.set(null);
-
     const timeout = new Promise<{ error: null }>((resolve) => {
       setTimeout(() => resolve({ error: null }), 2000);
     });
-
     try {
       await Promise.race([supabase.auth.signOut({ scope: 'local' }), timeout]);
-    } catch {
-      // Keep local state cleared even if auth client sign-out fails.
-    }
+    } catch { /* keep local state cleared */ }
   }
 
   async function verifySessionUser(session: any) {
     const accessToken = session?.access_token;
     if (!accessToken) return null;
-
     try {
       const { data, error } = await withTimeout(supabase.auth.getUser(accessToken), AUTH_TIMEOUT_MS);
       if (error || !data?.user?.id) return null;
       return data.user;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
 
   async function hydrateUserProfile(authUser: any) {
@@ -90,14 +77,9 @@
       supabase.from('users').select('*').eq('id', authUser.id).maybeSingle(),
       AUTH_TIMEOUT_MS
     );
+    if (profileError) throw profileError;
 
-    if (profileError) {
-      throw profileError;
-    }
-
-    if (existingProfile) {
-      return toStoreUser(existingProfile);
-    }
+    if (existingProfile) return toStoreUser(existingProfile);
 
     const username =
       authUser.user_metadata?.user_name ??
@@ -108,25 +90,12 @@
     const { data: createdProfile, error: createError } = await withTimeout(
       supabase
         .from('users')
-        .upsert(
-          {
-            id: authUser.id,
-            username,
-            coins: 500,
-            rating: 1000,
-            created_at: new Date().toISOString(),
-          },
-          { onConflict: 'id' }
-        )
+        .upsert({ id: authUser.id, username, coins: 500, rating: 1000, created_at: new Date().toISOString() }, { onConflict: 'id' })
         .select('*')
         .single(),
       AUTH_TIMEOUT_MS
     );
-
-    if (createError || !createdProfile) {
-      throw createError ?? new Error('Unable to create user profile');
-    }
-
+    if (createError || !createdProfile) throw createError ?? new Error('Unable to create user profile');
     return toStoreUser(createdProfile);
   }
 
@@ -135,74 +104,71 @@
   async function applySession(session: any) {
     const token = ++authRequestToken;
     const authUser = session?.user;
-
     if (!authUser) {
       hasAuthSession.set(false);
       currentUser.set(null);
       authHydrated.set(true);
       return;
     }
-
     const verifiedAuthUser = await verifySessionUser(session);
     if (!verifiedAuthUser) {
-      if (token === authRequestToken) {
-        await clearLocalAuthState();
-        authHydrated.set(true);
-      }
+      if (token === authRequestToken) { await clearLocalAuthState(); authHydrated.set(true); }
       return;
     }
-
     try {
       const hydratedUser = await hydrateUserProfile(verifiedAuthUser);
-      if (token === authRequestToken) {
-        hasAuthSession.set(true);
-        currentUser.set(hydratedUser as any);
-      }
+      if (token === authRequestToken) { hasAuthSession.set(true); currentUser.set(hydratedUser as any); }
     } catch {
-      if (token === authRequestToken) {
-        await clearLocalAuthState();
-      }
+      if (token === authRequestToken) await clearLocalAuthState();
     } finally {
-      if (token === authRequestToken) {
-        authHydrated.set(true);
-      }
+      if (token === authRequestToken) authHydrated.set(true);
     }
   }
 
   onMount(() => {
-    const hardFallback = setTimeout(() => {
-      authHydrated.set(true);
-    }, AUTH_TIMEOUT_MS + 500);
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    const hardFallback = setTimeout(() => { authHydrated.set(true); }, AUTH_TIMEOUT_MS + 500);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       void applySession(session);
     });
-
     void (async () => {
       try {
         const { data } = await withTimeout(supabase.auth.getSession(), AUTH_TIMEOUT_MS);
         await applySession(data.session);
-      } catch {
-        // Keep existing session/profile state if onAuthStateChange already hydrated it.
-        authHydrated.set(true);
-      }
+      } catch { authHydrated.set(true); }
     })();
-
-    return () => {
-      clearTimeout(hardFallback);
-      subscription.unsubscribe();
-    };
+    return () => { clearTimeout(hardFallback); subscription.unsubscribe(); };
   });
 </script>
+
+<!-- Layered animated background -->
+<div aria-hidden="true" class="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+  <!-- Base dark gradient -->
+  <div class="absolute inset-0 bg-mesh"></div>
+
+  <!-- Dot grid overlay -->
+  <div class="absolute inset-0 bg-dot-grid opacity-30"></div>
+
+  <!-- Ambient orbs -->
+  <div
+    class="absolute -top-48 -left-48 w-[700px] h-[700px] rounded-full animate-orb-drift"
+    style="background: radial-gradient(circle, rgba(124,58,237,0.14) 0%, transparent 70%); animation-duration: 20s;"
+  ></div>
+  <div
+    class="absolute top-[45%] -right-64 w-[600px] h-[600px] rounded-full animate-orb-drift"
+    style="background: radial-gradient(circle, rgba(79,70,229,0.11) 0%, transparent 70%); animation-duration: 26s; animation-delay: -8s;"
+  ></div>
+  <div
+    class="absolute -bottom-32 left-[25%] w-[500px] h-[400px] rounded-full animate-orb-drift"
+    style="background: radial-gradient(circle, rgba(245,158,11,0.07) 0%, transparent 70%); animation-duration: 22s; animation-delay: -14s;"
+  ></div>
+</div>
 
 <div class="min-h-screen text-white relative overflow-x-hidden">
   <Nav />
   <main class="relative z-10">
     {#if routeIsProtected && (!$authHydrated || !$hasAuthSession)}
       <div class="max-w-7xl mx-auto px-4 py-8">
-        <div class="max-w-xl rounded-2xl border border-gray-800 bg-gray-900/80 px-5 py-6 text-gray-300">
+        <div class="soft-panel max-w-sm rounded-2xl px-6 py-5 text-sm" style="color: var(--text-2);">
           {$authHydrated ? 'Redirecting to sign in...' : 'Restoring session...'}
         </div>
       </div>
